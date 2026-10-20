@@ -1640,16 +1640,28 @@
             { id: 'wpole', pole: 'x', x0: -HALF_W - POLE_LEN, x1: -HALF_W, z0: -0.5, z1: 0.5 },
             { id: 'wplat', x0: -HALF_W - POLE_LEN - EXT_PLAT_SIZE, x1: -HALF_W - POLE_LEN, z0: -EXT_PLAT_SIZE / 2, z1: EXT_PLAT_SIZE / 2, poleId: 'wpole' }
         ];
-        // Which walkable surface is (x, z) on? Poles are tested with a wider
-        // tolerance than the 1-stud beam because bot bodies are wider than the pole:
-        // anything roughly over the beam counts as "crossing it".
+        // Which walkable surface is (x, z) on? Poles use a LATERAL-ONLY tolerance:
+        // the slack (0.75 default) applies across the 1-stud beam so bot bodies
+        // wider than the pole still count as "crossing it", while along the beam's
+        // length the match is near-exact (+/-0.1). The old code inflated the beam
+        // ends too, which handed the seam bands at both ends to the pole surface -
+        // crossing bots circled in those bands and got stuck between the pole area
+        // and the map/platform. Now the seams belong to the surfaces that actually
+        // cover them.
         function surfaceAt(x, z, poleTol, rectTol) {
             const pt = (poleTol === undefined ? 0.75 : poleTol);
             const rt = (rectTol === undefined ? 0 : rectTol);
             for (let i = 0; i < MAP_SURFACES.length; i++) {
                 const s = MAP_SURFACES[i];
-                const t = s.pole ? pt : rt;
-                if (x >= s.x0 - t && x <= s.x1 + t && z >= s.z0 - t && z <= s.z1 + t) return s;
+                if (s.pole) {
+                    if (s.pole === 'z') {
+                        if (Math.abs(x) <= 0.5 + pt && z >= s.z0 - 0.1 && z <= s.z1 + 0.1) return s;
+                    } else {
+                        if (Math.abs(z) <= 0.5 + pt && x >= s.x0 - 0.1 && x <= s.x1 + 0.1) return s;
+                    }
+                } else if (x >= s.x0 - rt && x <= s.x1 + rt && z >= s.z0 - rt && z <= s.z1 + rt) {
+                    return s;
+                }
             }
             return null;
         }
@@ -1675,15 +1687,18 @@
                 return _navWP;
             }
             // Currently crossing a pole: continue outward toward its platform, or
-            // head back to the map if the goal is anywhere else.
+            // head back to the map if the goal is anywhere else. The waypoint aims
+            // PAST the beam end (1.5 studs onto the next surface) so the crossing
+            // always completes - a waypoint inside the beam left bots slowing to a
+            // stop at the seam instead of stepping off the end.
             if (s.pole) {
                 const outward = (g.id === s.id.replace('pole', 'plat'));
                 if (s.pole === 'z') {
                     _navWP.x = 0;
-                    _navWP.z = outward ? s.z1 - 0.6 : s.z0 + 0.6;
+                    _navWP.z = outward ? s.z1 + 1.5 : s.z0 - 1.5;
                 } else {
                     _navWP.z = 0;
-                    _navWP.x = outward ? s.x1 - 0.6 : s.x0 + 0.6;
+                    _navWP.x = outward ? s.x1 + 1.5 : s.x0 - 1.5;
                 }
                 return _navWP;
             }
@@ -1771,7 +1786,7 @@
         let spectateIndexHint = -1;     // last known list index of the watch target
         const graphicsLightBase = { ambient: 0.8, sun: 1.0, hemi: 0 };   // baseline light intensities per graphics level
         
-        let charGroup, charMaterials = [], partMaterials = {}, collisionObjs = [], ladderObjs = []; 
+        let charGroup, charMaterials = [], partMaterials = {}, collisionObjs = [], ladderObjs = [], npcFloorObjs = []; 
         let charHead, pL_Arm, pR_Arm, pL_Leg, pR_Leg, charTorso;
         let meshL_Arm, meshR_Arm;
         
@@ -1945,17 +1960,22 @@
         // ===== SPECIAL BOTS =====
         // Two named champions with fixed identities, each rolling a 15% chance to
         // spawn whenever a bot joins the server (at most one of each at a time).
-        // Both are level 16 with an oversized sword hitbox: a 5x5x5-stud sphere
-        // (radius 2.5 studs vs the regular 2.0) that still deals normal sword damage.
-        const SPECIAL_HIT_RADIUS = 2.5;                 // 5x5x5-stud sphere hitbox
+        // Both are level 16 with an oversized sword hitbox: an 8x8x8-stud sphere
+        // (radius 4 studs) centered on the blade midpoint that still deals normal
+        // sword damage. Each has a display name + username (Roblox style) and a
+        // fixed chat color: DivineFlame chats in BLUE with polite lines, Astralium
+        // chats in PINK with a toxic attitude (kill chat + tbag).
+        const SPECIAL_HIT_RADIUS = 4.0;                 // 8x8x8-stud sphere hitbox
         const SPECIAL_BOTS = {
             DivineFlame: {
-                name: 'DivineFlame', mode: 'Linear', level: 16, bigHitbox: true,
-                colors: { head: 0xffffff, arms: 0xffffff, legs: 0xffffff, torso: 0x101010 }
+                name: 'DivineFlame', username: 'Darkheart_Illuminum', mode: 'Linear', level: 16, bigHitbox: true,
+                colors: { head: 0xffffff, arms: 0xffffff, legs: 0xffffff, torso: 0x101010 },
+                chatColor: '#01A2FF', chatTrait: 'Fair', chatStyle: 'polite'
             },
             Astralium: {
-                name: 'Astralium', mode: 'Focus', level: 16, bigHitbox: true,
-                colors: { head: 0xffffff, arms: 0x101010, legs: 0x2b1454, torso: 0x6225d1 }
+                name: 'Astralium', username: 'XxUnknown_BrockXx', mode: 'Focus', level: 16, bigHitbox: true,
+                colors: { head: 0xffffff, arms: 0x101010, legs: 0x2b1454, torso: 0x6225d1 },
+                chatColor: '#E8BAC8', chatTrait: 'Toxic'
             }
         };
         // Is this special bot currently in the server? (alive or waiting to respawn)
@@ -1966,6 +1986,8 @@
         const BOT_CHAT_FAIR = ['gg', 'good fight', 'well fought', 'nice duel', 'you were tough', 'gg wp', 'good game', 'close one'];
         const BOT_CHAT_TOXIC = ['ez', 'ur trash', 'npc kid', 'get clapped', '0 skill', 'sit down', 'l2p', 'free kill', 'too easy', 'trash kid'];
         const BOT_CHAT_PASSIVE = ['leave me alone', 'i did not want this fight', 'please stop', 'go away', 'sorry', 'not again'];
+        // DivineFlame's polite texting style (blue chat)
+        const BOT_CHAT_POLITE = ['gg, well fought!', 'you fought honorably', 'a fine duel, friend', 'may your blade stay sharp', 'thank you for the battle', 'well met, warrior', 'you did great out there', 'good luck in your next fight', 'it was an honor to cross swords'];
         function randomSpawnPadPos(y) {
             if (spawnPads.length === 0) return new THREE.Vector3(0, (y !== undefined ? y : 8.625), 0);
             const pad = spawnPads[Math.floor(Math.random() * spawnPads.length)];
@@ -2014,6 +2036,13 @@
         // --- Jump animation timing (rotation finishes exactly at the apex) ---
         let jumpStartVelY = 53.15;
         let jumpVelCaptured = false;
+
+        // --- Truss jump-launch momentum grace ---
+        // The airborne branch zeroes airHorizontalVel the moment every movement
+        // key is released; while > 0 the backwards launch off a truss is exempt
+        // from that immediate stop (and from steering) so the 13-stud flight
+        // actually completes even if the player lets go mid-air.
+        let playerLaunchGrace = 0;
 
         // --- Chat emotes ("/e cheer", "/e wave", "/e dance2") ---
         let activeEmote = null;
@@ -2348,9 +2377,10 @@
         }
         // hitRadius (optional): the sword's hit sphere radius. Regular swords use
         // SWORD_HIT_RADIUS (2.0); the special champions pass SPECIAL_HIT_RADIUS
-        // (2.5 = a 5x5x5-stud sphere) so their sword hitbox is bigger than
-        // everyone else's while still dealing normal sword damage.
-        function swordDamageCheck(sword, swingId, st, targetTorso, targetFF, now, onDamage, hitRadius) {
+        // with sphereHit=true - an 8x8x8-stud sphere centered on the blade
+        // midpoint - so their sword hitbox is far bigger than everyone else's
+        // while still dealing normal sword damage.
+        function swordDamageCheck(sword, swingId, st, targetTorso, targetFF, now, onDamage, hitRadius, sphereHit) {
             if (targetFF) { st.inBox = false; st.armed = true; return; }
             if (!sword || !sword.visible) return;
             const R = (hitRadius || SWORD_HIT_RADIUS);
@@ -2363,6 +2393,11 @@
             _pointVec.subVectors(_targetPos, _hilt);
             let t = Math.max(0, Math.min(lineLen, _pointVec.dot(_lineVec)));
             _closestPoint.copy(_hilt).addScaledVector(_lineVec, t);
+            if (sphereHit) {
+                // Sphere mode (special champions): the hitbox is a single sphere
+                // centered on the blade MIDPOINT - distance from there < R.
+                _closestPoint.copy(_hilt).addScaledVector(_lineVec, lineLen / 2);
+            }
             const dist = _closestPoint.distanceTo(_targetPos);
             if (dist < R) {
                 const wasIn = st.inBox;
@@ -2416,6 +2451,11 @@
         }
         function updateSwordCombat(now) {
             if (isRagdoll) return;
+            // Host-authoritative bots: a CLIENT never computes bot damage - not its
+            // own sword vs the mirrored bots, not bot-vs-bot, not bots vs anyone.
+            // The host computes every hit against its authoritative bots (local
+            // player included) and pushes results through snapshots and 'dmg'.
+            const botsLocal = !netClientMode();
             if (netJoined && isHoldingSword && swordModel && swordModel.visible) {
                 remotePlayers.forEach(rp => {
                     if (rp.dead) return;
@@ -2429,7 +2469,7 @@
             }
 
             // --- SWORD FIGHTING BOT: player sword vs NPC bots ---
-            if (isHoldingSword && swordModel && swordModel.visible) {
+            if (botsLocal && isHoldingSword && swordModel && swordModel.visible) {
                 npcs.forEach(n => {
                     if (n.isDead || n.forcefieldActive) return;
                     const st = stateFor(playerSwordStates, 'npc:' + n.id);
@@ -2451,7 +2491,7 @@
             // --- REACH SCRIPT: extended hitbox vs remote players (multiplayer) ---
             // Damage travels through the same 'dmg' protocol as normal swings, so
             // other people in multiplayer take real damage from the extended hitbox.
-            if (reachState.active && reachState.damage && isHoldingSword && swordModel && swordModel.visible) {
+            if (reachState.active && reachState.damage && netJoined && isHoldingSword && swordModel && swordModel.visible) {
                 remotePlayers.forEach(rp => {
                     if (rp.dead) return;
                     const st = stateFor(playerSwordStates, 'reachrp:' + rp.id);
@@ -2463,15 +2503,18 @@
                 });
             }
 
-            // --- REACH SCRIPT: extended hitbox vs NPC bots ---
-            if (reachState.active && reachState.damage && isHoldingSword && swordModel && swordModel.visible) {
+            // --- REACH SCRIPT: extended hitbox vs NPC bots (host authoritative) ---
+            if (reachState.active && reachState.damage && botsLocal && isHoldingSword && swordModel && swordModel.visible) {
                 npcs.forEach(n => {
-                    if (n.isDead) return;
+                    if (n.isDead || n.forcefieldActive) return;
                     const st = stateFor(playerSwordStates, 'reachnpc:' + n.id);
-                    reachDamageCheck(swordModel, playerSwingId, st, n.torso, n.forcefieldActive, now, () => {
+                    reachDamageCheck(swordModel, playerSwingId, st, n.torso, false, now, () => {
                         const dmg = swingDamage(swordSwingType);
                         n.health = Math.max(0, n.health - dmg);
                         updateNPCHealthBar(n);
+                        // Attacking a bot breaks any alliance it had with you
+                        if (n.allyPlayer) n.allyPlayer = false;
+                        // Passive bots remember their attacker and defend themselves
                         if (effBotTrait(n) !== 'Aggressive' && n.health > 0) {
                             n.lastAttacker = { target: { kind: 'player', ref: null }, time: performance.now() };
                         }
@@ -2480,28 +2523,10 @@
                 });
             }
 
-            // --- DUMMY: the normal sword hitbox AND the extended reach both hit him ---
-            if (dummyNPC && !dummyNPC.isDead && isHoldingSword && swordModel && swordModel.visible) {
-                const dst = stateFor(playerSwordStates, 'npc:dummy');
-                swordDamageCheck(swordModel, playerSwingId, dst, dummyNPC.torso, false, now, () => {
-                    dummyNPC.health = Math.max(0, dummyNPC.health - swingDamage(swordSwingType));
-                    updateNPCHealthBar(dummyNPC);
-                    if (dummyNPC.health <= 0) triggerDummyDeath();
-                });
-                if (reachState.active && reachState.damage) {
-                    const rst = stateFor(playerSwordStates, 'reachdummy');
-                    reachDamageCheck(swordModel, playerSwingId, rst, dummyNPC.torso, false, now, () => {
-                        dummyNPC.health = Math.max(0, dummyNPC.health - swingDamage(swordSwingType));
-                        updateNPCHealthBar(dummyNPC);
-                        if (dummyNPC.health <= 0) triggerDummyDeath();
-                    });
-                }
-            }
-
             // --- BOT BATTLE ARENA: NPC swords vs other NPC bots ---
             // Bots fight each other: every live bot's sword is tested against every
             // other live bot's torso (their own per-pair hit state tracks swings).
-            npcs.forEach(n => {
+            if (botsLocal) npcs.forEach(n => {
                 if (n.isDead) return;
                 const sw = n.sword;
                 if (!sw || !sw.visible) return;
@@ -2517,13 +2542,13 @@
                             m.lastAttacker = { target: { kind: 'npc', ref: n }, time: performance.now() };
                         }
                         if (m.health <= 0) triggerNPCDeath(m, n);
-                    }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS);
+                    }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS, n.bigHitbox);
                 });
             });
 
             // --- BOT BATTLE ARENA: NPC swords vs remote players ---
             // Damage is sent to the victim's client through the existing 'dmg' protocol.
-            npcs.forEach(n => {
+            if (botsLocal) npcs.forEach(n => {
                 if (n.isDead) return;
                 const sw = n.sword;
                 if (!sw || !sw.visible) return;
@@ -2534,14 +2559,14 @@
                         const msg = { t: 'dmg', target: rp.id, dmg: swingDamage(n.swordSwingType), by: 'bot:' + n.name };
                         if (isHost) msg.id = myNetId();
                         if (netJoined && netConns.length > 0) broadcast(msg);
-                    }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS);
+                    }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS, n.bigHitbox);
                 });
             });
 
             // --- BOT BATTLE ARENA: remote players' swords vs local NPC bots ---
             // Remote swings arrive as 'swing' messages; each swing bumps the local
             // swing counter which re-arms the per-pair hit state for the next pass.
-            remotePlayers.forEach(rp => {
+            if (botsLocal) remotePlayers.forEach(rp => {
                 if (rp.dead || rp.st.d) return;
                 const sw = rp.sword;
                 if (!sw || !sw.visible || !rp.st.h) return;
@@ -2555,20 +2580,24 @@
                         if (effBotTrait(n) !== 'Aggressive' && n.health > 0) {
                             n.lastAttacker = { target: { kind: 'remote', ref: rp }, time: performance.now() };
                         }
-                        if (n.health <= 0) triggerNPCDeath(n, 'remote');
+                        if (n.health <= 0) {
+                            triggerNPCDeath(n, 'remote');
+                            // Credit the remote player's own client for the bot kill
+                            if (hostHasClients()) { try { broadcast({ t: 'botkill', by: rp.id }); } catch (e) {} }
+                        }
                     });
                 });
             });
 
             // --- SWORD FIGHTING BOT: NPC swords vs the player ---
-            npcs.forEach(n => {
+            if (botsLocal) npcs.forEach(n => {
                 if (n.isDead) return;
                 const sw = n.sword;
                 if (!sw || !sw.visible) return;
                 const st = stateFor(playerSwordStates, 'npcatk:' + n.id);
                 swordDamageCheck(sw, n.swingId, st, charTorso, isForcefieldActive, now, () => {
                     applyLocalDamage(swingDamage(n.swordSwingType), 'npc', n);
-                }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS);
+                }, n.bigHitbox ? SPECIAL_HIT_RADIUS : SWORD_HIT_RADIUS, n.bigHitbox);
             });
         }
 
@@ -2684,6 +2713,11 @@
 
                 buildPlayground();
                 createSkyDecorations();
+                // Bot floor-support set: every collision object EXCEPT the ladder
+                // meshes (the truss lattices). Bots don't climb - a floor ray cast
+                // from inside a stacked truss column would otherwise catch the unit
+                // boxes' undersides and "escalate" the bot straight up the column.
+                npcFloorObjs = collisionObjs.filter(o => !ladderObjs.includes(o));
                 
                 try {
                     await document.fonts.load('80px Orbitron');
@@ -2727,9 +2761,8 @@
                 buildGraphicsInterface();
                 buildCameraInterface();
                 createTrailCircles();
-                // Cheat system (Delta executor + IY command bar) + static test Dummy
+                // Cheat system (Delta executor + IY command bar + scripts)
                 initExploitSystem();
-                spawnDummy();
                 
                 // Initial camera setup so we don't see a blank sky
                 camera.position.set(0, 6.5, 35);
@@ -2768,7 +2801,7 @@
                 });
 
                 window.addEventListener('keydown', (e) => { 
-                    if (document.activeElement && (document.activeElement.id === 'chat-input' || document.activeElement.id === 'iy-cmdbar' || document.activeElement.id === 'editor-textarea' || document.activeElement.id === 'rg-reach')) return; 
+                    if (document.activeElement && (document.activeElement.id === 'chat-input' || document.activeElement.id === 'iy-cmdbar' || document.activeElement.id === 'editor-textarea' || document.activeElement.id === 'rg-reach' || document.activeElement.id === 'cloud-search-input' || (document.activeElement.tagName === 'INPUT' && document.activeElement.closest && document.activeElement.closest('#rv3-root, #flygui, #script-menu')))) return; 
                     if (isAvatarEditorOpen) return;
                     if (document.activeElement && (document.activeElement.id === 'pi-display-name' || document.activeElement.id === 'pi-username' || document.activeElement.id === 'avatar-name-input' || document.activeElement.id === 'custom-hex-input')) return;
                     // FIX (Shift rapid-toggle): keydown auto-repeats while a key is HELD,
@@ -2899,7 +2932,7 @@
                 // Sword swing / lunge (click / double-click)
                 window.addEventListener('mousedown', (e) => {
                     if (e.button === 0 && isHoldingSword && !isMenuOpen && !isAvatarEditorOpen && !isRagdoll && isRunning) {
-                        const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui');
+                        const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel');
                         if (!uiHit) handleSwordClick();
                     }
                 });
@@ -2908,7 +2941,7 @@
                 window.addEventListener('mousedown', (e) => {
                     if (e.button !== 0 || !isRunning || isMenuOpen || isAvatarEditorOpen || isRagdoll) return;
                     if (equippedSlot === -1 || !playerInventory[equippedSlot] || playerInventory[equippedSlot].id !== 'tptool') return;
-                    const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui');
+                    const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel');
                     if (uiHit) return;
                     // While the pointer is locked (shift lock / first person) the cursor is
                     // frozen, so aim from the screen center instead of the stale clientX/Y.
@@ -2942,7 +2975,7 @@
                 document.addEventListener('touchstart', (e) => {
                     if (isMobile && currentInputMode === 'pc') {
                         const target = e.target;
-                        if (!target.closest('#pause-menu') && !target.closest('#avatar-editor-menu') && !target.closest('#avatar-naming-modal') && !target.closest('#roblox-menu-btn') && !target.closest('.confirmation-panel') && !target.closest('#shiftlock-toggle') && !target.closest('#top-bar-menu') && !target.closest('#dropdown-menu') && !target.closest('#leaderboard') && !target.closest('#inventory') && !target.closest('#chat-container') && !target.closest('#exploit-overlay') && !target.closest('#exploit-sidebar') && !target.closest('#exploit-toggle') && !target.closest('#iy-container') && !target.closest('#iy-toggle') && !target.closest('#reach-gui')) {
+                        if (!target.closest('#pause-menu') && !target.closest('#avatar-editor-menu') && !target.closest('#avatar-naming-modal') && !target.closest('#roblox-menu-btn') && !target.closest('.confirmation-panel') && !target.closest('#shiftlock-toggle') && !target.closest('#top-bar-menu') && !target.closest('#dropdown-menu') && !target.closest('#leaderboard') && !target.closest('#inventory') && !target.closest('#chat-container') && !target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) {
                             switchToMobileControls();
                             return; 
                         }
@@ -2956,7 +2989,7 @@
 
                     for (let i = 0; i < e.changedTouches.length; i++) {
                         const t = e.changedTouches[i];
-                        if (t.target && t.target.closest && t.target.closest('#chat-container, #leaderboard, #inventory')) continue;
+                        if (t.target && t.target.closest && t.target.closest('#chat-container, #leaderboard, #inventory, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) continue;
                         const isInsideJoystick = (currentMovementMode === 'classic' && t.clientX >= joyRect.left && t.clientX <= joyRect.right && t.clientY >= joyRect.top && t.clientY <= joyRect.bottom);
                         const isInsideDynamicZone = (currentMovementMode === 'dynamic' && t.clientX >= dZoneRect.left && t.clientX <= dZoneRect.right && t.clientY >= dZoneRect.top && t.clientY <= dZoneRect.bottom);
                         const isInsideJump = (t.clientX >= jumpRect.left && t.clientX <= jumpRect.right && t.clientY >= jumpRect.top && t.clientY <= jumpRect.bottom);
@@ -3022,7 +3055,7 @@
                 window.addEventListener('touchstart', (e) => {
                     if (currentMovementMode !== 'tap' || isMenuOpen || isRagdoll || !isRunning || isAvatarEditorOpen) return;
                     const target = e.target;
-                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#jump-button') || target.closest('#mobile-shiftlock') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container')) return;
+                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#jump-button') || target.closest('#mobile-shiftlock') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) return;
                     const touch = e.changedTouches[0];
                     const mouse = new THREE.Vector2((touch.clientX / window.innerWidth) * 2 - 1, -(touch.clientY / window.innerHeight) * 2 + 1);
                     const raycaster = new THREE.Raycaster();
@@ -3037,7 +3070,7 @@
                 window.addEventListener('mousedown', (e) => {
                     if (currentMovementMode !== 'tap' || isMenuOpen || isRagdoll || !isRunning || isAvatarEditorOpen || e.button !== 0) return;
                     const target = e.target;
-                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay') || target.closest('#exploit-sidebar') || target.closest('#exploit-toggle') || target.closest('#iy-container') || target.closest('#iy-toggle') || target.closest('#reach-gui')) return;
+                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) return;
                     const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
                     const raycaster = new THREE.Raycaster();
                     raycaster.setFromCamera(mouse, camera);
@@ -3614,8 +3647,8 @@
             });
             npcs.forEach(b => {
                 serverPlayers.push({
-                    displayName: b.name,
-                    username: b.name,
+                    displayName: b.displayName || b.name,
+                    username: b.username || b.name,
                     skinMap: {
                         head: b.colors.head, torso: b.colors.torso,
                         leftArm: b.colors.arms, rightArm: b.colors.arms,
@@ -3654,8 +3687,8 @@
             if (!b) return;
             botProfileOpen = b;
             closePlayerProfileMenu();
-            document.getElementById('bot-profile-name').textContent = b.name;
-            document.getElementById('bot-profile-username').textContent = '@' + b.name;
+            document.getElementById('bot-profile-name').textContent = b.displayName || b.name;
+            document.getElementById('bot-profile-username').textContent = '@' + (b.username || b.name);
             const img = document.querySelector('#bot-profile-snapshot img');
             if (img) img.src = renderAvatarSnapshot({
                 head: b.colors.head, torso: b.colors.torso,
@@ -3886,15 +3919,19 @@
                 sun.intensity = 1.0;
                 if (hemiLight) hemiLight.intensity = 0;
             } else if (level < 7) {
-                // Full-map shadows: a fixed frustum covering the entire 256x256 plate.
+                // Full-map shadows: a fixed frustum covering the ENTIRE playfield -
+                // main platform (201x325) + 60-stud poles + the 100x100 outer
+                // platforms, whose far corners reach |x| 260.5 / |z| 322.5 (half-
+                // diagonal ~415 + height margin). The map sizes are bumped to keep
+                // the texel density the old 380-wide frustum had.
                 sun.castShadow = true;
-                const shadowSize = (level >= 5) ? 1024 : 512;
+                const shadowSize = (level >= 5) ? 2048 : 1024;
                 sun.shadow.mapSize.width = shadowSize;
                 sun.shadow.mapSize.height = shadowSize;
-                const d = 190;
+                const d = 450;
                 sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
                 sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
-                sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 500;
+                sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 650;
                 sun.shadow.bias = -0.0002;
                 sun.shadow.normalBias = 0.15;
                 renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -3907,10 +3944,10 @@
                 const shadowSize = (level >= 8) ? 4096 : 2048;
                 sun.shadow.mapSize.width = shadowSize;
                 sun.shadow.mapSize.height = shadowSize;
-                const d = 190; // full map
+                const d = 450; // full map incl. poles + outer platforms
                 sun.shadow.camera.left = -d; sun.shadow.camera.right = d;
                 sun.shadow.camera.top = d; sun.shadow.camera.bottom = -d;
-                sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 500;
+                sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 650;
                 sun.shadow.bias = -0.0001;
                 sun.shadow.normalBias = 0.12 + enh * 0.02;
                 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -4413,6 +4450,17 @@
         }
 
         function processChatCommand(msg) {
+            // CHEAT SYSTEM: any ';command' typed in chat runs through the IY
+            // command bar - ";speed 100", ";goto DivineFlame", ";tgoto dummy", ...
+            // The four built-in dev commands keep their native handling below.
+            if (window.runIYCommand && /^;\S/.test(msg)) {
+                const iyCmd = msg.replace(/^;\s*/, '');
+                const head = iyCmd.toLowerCase().split(' ')[0];
+                if (head !== 'fly' && head !== 'unfly' && head !== 'god' && head !== 'ungod') {
+                    window.runIYCommand(iyCmd);
+                    if (typeof addSystemChat === 'function') addSystemChat('IY: ' + iyCmd);
+                }
+            }
             const lowerMsg = msg.toLowerCase();
             if (lowerMsg.startsWith(';')) {
                 if (!isDevMode) return; 
@@ -6328,8 +6376,9 @@
             ];
             remotePlayers.forEach(rp => rows.push({ name: rp.name, kills: rp.st.k || 0, deaths: rp.st.dd || 0, streak: rp.st.ks || 0, color: 'rgba(255,255,255,0.9)' }));
             // Bot battle arena: the bots are server members too - listed with their
-            // rolled names and their own kills/deaths/killstreaks.
-            npcs.forEach(n => rows.push({ name: n.name, kills: n.kills || 0, deaths: n.deaths || 0, streak: n.killstreak || 0, color: 'rgba(255,255,255,0.72)' }));
+            // DISPLAY names (username handles only appear on the People profiles)
+            // and their own kills/deaths/killstreaks.
+            npcs.forEach(n => rows.push({ name: n.displayName || n.name, kills: n.kills || 0, deaths: n.deaths || 0, streak: n.killstreak || 0, color: 'rgba(255,255,255,0.72)' }));
             rows.sort((a, b) => b.kills - a.kills);
             rows.forEach(r => {
                 const row = document.createElement('div');
@@ -6567,6 +6616,9 @@
                     if (rp.id !== id) list.push({ id: rp.id, name: rp.name, username: rp.username, color: rp.chatColor, skinMap: rp.skinMap });
                 });
                 try { conn.send({ t: 'players', list: list }); } catch (e) {}
+                // Hand the new client the full bot roster immediately so it starts
+                // mirroring the same server members as everyone else.
+                sendBotInfo(conn);
                 broadcast({ t: 'join', id: id, name: d.name, username: d.username, color: d.color, skinMap: d.skinMap }, conn);
                 addSystemChat('Your friend ' + d.name + ' has joined the game.');
             } else if (d.t === 'state') {
@@ -6621,6 +6673,264 @@
                 const rp = remotePlayers.get(d.id);
                 if (rp) addSystemChat(rp.name + ' has left the game');
                 removeRemotePlayer(d.id);
+            } else if (d.t === 'bots') {
+                applyBotSnapshot(d.s);          // host's 10Hz bot state stream
+            } else if (d.t === 'botinfo') {
+                reconcileBotInfo(d.list);       // host's authoritative bot roster
+            } else if (d.t === 'botchat') {
+                for (let i = 0; i < npcs.length; i++) { if (npcs[i].id === d.id) { addBotChat(npcs[i], d.msg); break; } }
+            } else if (d.t === 'bottbag') {
+                let killer = null, victim = null;
+                for (let i = 0; i < npcs.length; i++) {
+                    if (npcs[i].id === d.id) killer = npcs[i];
+                    else if (npcs[i].id === d.victim) victim = npcs[i];
+                }
+                if (killer && (d.victim === 'player' || victim)) {
+                    let headPos = null;
+                    if (d.victim === 'player') { if (isRagdoll && activeDebris.length > 0) headPos = activeDebris[0].mesh.position.clone(); }
+                    else if (victim.debris && victim.debris.length > 0) headPos = victim.debris[0].mesh.position.clone();
+                    if (headPos) killer.tbag = { victim: d.victim === 'player' ? 'player' : victim, timer: 6.0, phase: Math.random() * Math.PI * 2, hp0: killer.health, axis: Math.random() < 0.5 ? 'x' : 'z', pos: headPos };
+                }
+            } else if (d.t === 'botkill') {
+                // A remote player killed a host bot - credit their local kill count
+                if (d.by === myNetId()) { playerKills += 1; playerKillstreak += 1; rebuildLeaderboard(); }
+            }
+        }
+
+        // ===================== HOST-AUTHORITATIVE BOTS (multiplayer) =====================
+        // In multiplayer the HOST is the single source of truth for every bot: it
+        // simulates the AI, combat, deaths, respawns and population shifts, and
+        // streams the results to the clients. Clients stop simulating their own
+        // bots entirely and instead mirror the host's server: identities arrive
+        // as 'botinfo' (same names, colors, levels, traits, stats for everyone)
+        // and movement/swings/deaths arrive as 10Hz 'bots' snapshots that are
+        // smoothly interpolated. Result: every player in the game sees the same
+        // server members doing the same moves, and bot damage dealt to or taken
+        // from a client flows through the host (the existing 'dmg' / 'swing'
+        // protocol) instead of being computed twice.
+        let netBotSyncActive = false;      // client: the first botinfo wiped the local bots
+        let netBotSnapshotTimer = 0;
+        let netBotInfoTimer = 0;
+        function netClientMode() { return netJoined && !isHost; }
+        function hostHasClients() { return isHost && netJoined && netConns.length > 0; }
+
+        // Full identity + stat roster the clients reconcile their bot list against.
+        // Includes the current position/yaw so a freshly created mirror spawns in
+        // place instead of flashing at the map center for a snapshot cycle.
+        function sendBotInfo(targetConn) {
+            if (!isHost) return;
+            const list = npcs.map(n => ({
+                id: n.id, name: n.name, username: n.username,
+                colors: { head: n.colors.head, torso: n.colors.torso, arms: n.colors.arms, legs: n.colors.legs },
+                level: n.level, mode: n.mode, trait: n.trait,
+                canChat: n.canChat, chatTrait: n.chatTrait, chatStyle: n.chatStyle,
+                chatColor: n.chatColor, special: n.special, bigHitbox: n.bigHitbox,
+                kills: n.kills, deaths: n.deaths, killstreak: n.killstreak,
+                p: [Math.round(n.pos.x * 100) / 100, Math.round(n.pos.y * 100) / 100, Math.round(n.pos.z * 100) / 100],
+                yaw: Math.round(n.yaw * 1000) / 1000,
+                dead: !!n.isDead
+            }));
+            const msg = { t: 'botinfo', list: list };
+            if (targetConn) { try { targetConn.send(msg); } catch (e) {} }
+            else if (hostHasClients()) broadcast(msg);
+        }
+
+        // 10Hz movement/swing/death snapshot: [id, x, y, z, yaw, hp, flags,
+        // swingId, swingType(0/1/2), kills, deaths, streak]. flags: 1 sword out,
+        // 2 dead, 4 forcefield, 32 void death (no client ragdoll).
+        function sendBotSnapshot() {
+            const s = [];
+            for (let i = 0; i < npcs.length; i++) {
+                const n = npcs[i];
+                let flags = 0;
+                if (n.sword && n.sword.visible) flags |= 1;
+                if (n.isDead) flags |= 2;
+                if (n.forcefieldActive) flags |= 4;
+                if (n.voidDeath) flags |= 32;
+                const swType = (n.swordSwingTime > 0) ? (n.swordSwingType === 'single' ? 1 : 2) : 0;
+                s.push([n.id,
+                    Math.round(n.pos.x * 100) / 100, Math.round(n.pos.y * 100) / 100, Math.round(n.pos.z * 100) / 100,
+                    Math.round(n.yaw * 1000) / 1000, Math.round(n.health),
+                    flags, n.swingId, swType, n.kills, n.deaths, n.killstreak]);
+            }
+            broadcast({ t: 'bots', s: s });
+        }
+
+        // Client: wipe the pre-join local bots once - from here on the bot list
+        // only ever mirrors the host's roster.
+        function clearLocalBots() {
+            while (npcs.length > 0) removeServerBot(npcs[0]);
+        }
+
+        // Client: create/refresh/remove mirrored bots to match the host roster.
+        function reconcileBotInfo(list) {
+            if (!Array.isArray(list)) return;
+            if (!netBotSyncActive) { clearLocalBots(); netBotSyncActive = true; }
+            const seen = {};
+            for (let i = 0; i < list.length; i++) {
+                const b = list[i];
+                seen[b.id] = true;
+                let n = null;
+                for (let k = 0; k < npcs.length; k++) { if (npcs[k].id === b.id) { n = npcs[k]; break; } }
+                if (!n) {
+                    spawnNPC(new THREE.Vector3(b.p ? b.p[0] : 0, b.p ? b.p[1] : PLATFORM_TOP_Y + 7, b.p ? b.p[2] : 0), b.special || null, b);
+                    n = npcs[npcs.length - 1];
+                    if (b.yaw !== undefined) n.yaw = b.yaw;
+                    if (b.dead) { n.isDead = true; n.group.visible = false; }   // dies offscreen, no ragdoll needed
+                    if (!b.dead) { n.forcefieldActive = true; n.forcefieldMoveTimer = 0; }   // until the first snapshot says otherwise
+                } else {
+                    // identities never change; stats do
+                    n.kills = b.kills || 0; n.deaths = b.deaths || 0; n.killstreak = b.killstreak || 0;
+                }
+            }
+            for (let i = npcs.length - 1; i >= 0; i--) {
+                if (!seen[npcs[i].id]) removeServerBot(npcs[i]);
+            }
+            gameBots = npcs.length;          // host disconnects -> local sim continues with this roster
+            rebuildLeaderboard();
+            if (isMenuOpen) buildPeopleGrid();
+        }
+
+        // Client: apply one 10Hz snapshot of every bot's state.
+        function applyBotSnapshot(rows) {
+            if (!Array.isArray(rows) || !netBotSyncActive) return;
+            let statsDirty = false;
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                let n = null;
+                for (let k = 0; k < npcs.length; k++) { if (npcs[k].id === r[0]) { n = npcs[k]; break; } }
+                if (!n) continue;                      // not in the roster yet - botinfo is coming
+                const flags = r[6];
+                // ---- DEATH (host-authoritative) ----
+                if (flags & 2) {
+                    if (!n.isDead) {
+                        n.isDead = true;
+                        playOofSound();
+                        n.horizontalVel.copy(n.netMoveVel); n.vel.set(0, n.netVelY || 0, 0);
+                        if (flags & 32) { n.group.visible = false; n.debris = []; n.debrisTimer = 0.1; }
+                        else { ragdollNPC(n); n.debrisTimer = 3.0; }
+                        n.tbag = null;
+                    }
+                    if (n.deaths !== r[10] || n.killstreak !== r[11]) statsDirty = true;
+                    n.deaths = r[10]; n.killstreak = r[11];
+                    continue;
+                }
+                // ---- RESPAWN (dead flag cleared) ----
+                if (n.isDead) {
+                    n.isDead = false;
+                    n.debris.forEach(d => scene.remove(d.mesh)); n.debris = [];
+                    n.group.visible = true;
+                    n.pos.set(r[1], r[2], r[3]);
+                    n.netTP.set(r[1], r[2], r[3]); n.netPrevTP.set(r[1], r[2], r[3]);
+                    n.netMoveVel.set(0, 0, 0); n.netVelY = 0;
+                    n.horizontalVel.set(0, 0, 0); n.vel.set(0, 0, 0);
+                }
+                // ---- MOVEMENT TARGET + velocity estimate ----
+                const nowMs = performance.now();
+                if (n.netTPTime > 0) {
+                    const el = Math.max(0.05, (nowMs - n.netTPTime) / 1000);
+                    n.netMoveVel.set((r[1] - n.netTP.x) / el, 0, (r[3] - n.netTP.z) / el);
+                    n.netVelY = (r[2] - n.netTP.y) / el;
+                }
+                n.netPrevTP.copy(n.netTP);
+                n.netTP.set(r[1], r[2], r[3]);
+                n.netTPTime = nowMs;
+                // ---- HEALTH / SWORD / FORCEFIELD ----
+                if (n.health !== r[5]) { n.health = r[5]; }
+                n.sword.visible = !!(flags & 1);
+                if (flags & 4) { if (!n.forcefieldActive) { n.forcefieldActive = true; n.forcefieldMoveTimer = 0; } }
+                else n.forcefieldActive = false;
+                // ---- SWINGS: a new host swingId starts the animation locally ----
+                if (r[7] !== n.lastNetSwingId) {
+                    n.lastNetSwingId = r[7];
+                    if (r[8] === 1) { n.swordSwingType = 'single'; n.swordSwingDuration = 0.3; n.swordSwingTime = 0.3; }
+                    else if (r[8] === 2) { n.swordSwingType = 'double'; n.swordSwingDuration = 0.5; n.swordSwingTime = 0.5; playNpcLungeSound(); }
+                }
+                // ---- STATS ----
+                if (n.kills !== r[9] || n.deaths !== r[10] || n.killstreak !== r[11]) statsDirty = true;
+                n.kills = r[9]; n.deaths = r[10]; n.killstreak = r[11];
+            }
+            if (statsDirty) rebuildLeaderboard();
+        }
+
+        // Client: per-frame mirror update - interpolation, animations, bubbles,
+        // debris, forcefield fades. No AI, no physics, no local damage: the host
+        // owns all of that; this only reproduces what the host decided.
+        function updateNetBots(dt) {
+            for (let i = 0; i < npcs.length; i++) {
+                const n = npcs[i];
+                const dc = n.group.position.distanceTo(camera.position);
+                n.nameSprite.material.opacity = THREE.MathUtils.clamp(1 - (dc / 100), 0, 1);
+                if (n.healthSprite.visible) n.healthSprite.material.opacity = n.nameSprite.material.opacity;
+                if (!showPlayerNames) n.nameSprite.material.opacity = 0;
+                for (let b = n.bubbles.length - 1; b >= 0; b--) {
+                    const bb = n.bubbles[b];
+                    bb.t += dt;
+                    if (bb.t > 7.5) { bb.el.remove(); n.bubbles.splice(b, 1); }
+                }
+                if (n.isDead) {
+                    if (n.debris.length > 0) {
+                        n.debrisTimer -= dt;
+                        if (n.debrisTimer <= 0) { n.debris.forEach(d => scene.remove(d.mesh)); n.debris = []; }
+                        else simulateDebrisSet(n.debris, dt);
+                    }
+                    continue;                     // respawn arrives via the next snapshot
+                }
+                // Host-driven tbag celebration: the slide itself runs locally over
+                // the victim's client-side ragdoll head.
+                if (n.tbag && botTbagUpdate(n, dt)) {
+                    n.pos.x += n.horizontalVel.x * dt;
+                    n.pos.z += n.horizontalVel.z * dt;
+                    n.group.position.set(n.pos.x, n.pos.y - 5.5, n.pos.z);
+                    n.group.rotation.y = n.yaw;
+                    continue;
+                }
+                // Smooth movement toward the host's latest snapshot (same feel as
+                // remote players): lerp normally, snap on teleports/respawns.
+                const smoothing = 1 - Math.exp(-dt * 14);
+                const dx = n.netTP.x - n.pos.x, dy = n.netTP.y - n.pos.y, dz = n.netTP.z - n.pos.z;
+                if (dx * dx + dy * dy + dz * dz > 12 * 12) n.pos.set(n.netTP.x, n.netTP.y, n.netTP.z);
+                else { n.pos.x += dx * smoothing; n.pos.y += dy * smoothing; n.pos.z += dz * smoothing; }
+                const dyaw = wrapAngle(n.netTP.yaw - n.yaw);
+                n.yaw += dyaw * smoothing;
+                // Estimated host velocity drives the walk animation + ragdoll impulses
+                n.horizontalVel.copy(n.netMoveVel);
+                n.vel.y = n.netVelY || 0;
+                // Forcefield fade (identical to the local bot update)
+                if (n.forcefieldActive) { n.forcefieldFade = Math.min(1, n.forcefieldFade + dt * 2); n.forcefieldMoveTimer += dt; }
+                else n.forcefieldFade = Math.max(0, n.forcefieldFade - dt * 2);
+                n.forcefield.material.opacity = n.forcefieldFade * 0.8;
+                n.group.position.set(n.pos.x, n.pos.y - 5.5, n.pos.z);
+                n.group.rotation.y = n.yaw;
+                // Swing animation (identical to the local bot update)
+                let aimArm = n.rightArm;
+                if (n.swordSwingTime > 0) {
+                    n.swordSwingTime -= dt;
+                    let progress = 1.0 - (n.swordSwingTime / n.swordSwingDuration);
+                    if (n.swordSwingType === 'single') {
+                        if (progress < 0.5) { let p = progress / 0.5; aimArm.rotation.x = THREE.MathUtils.lerp(-Math.PI / 2, 0, p); }
+                        else { let p = (progress - 0.5) / 0.5; aimArm.rotation.x = THREE.MathUtils.lerp(0, -Math.PI / 2, p); }
+                        if (n.sword) n.sword.rotation.set(-Math.PI / 2, 0, Math.PI);
+                    } else if (n.swordSwingType === 'double') {
+                        aimArm.rotation.x = -Math.PI / 2;
+                        if (n.sword) n.sword.rotation.set(0, 0, Math.PI);
+                    }
+                } else {
+                    aimArm.rotation.x = -Math.PI / 2;
+                    if (n.sword) n.sword.rotation.set(-Math.PI / 2, 0, Math.PI);
+                }
+                // Walk animation (identical to the local bot update)
+                if (n.horizontalVel.length() > 0.1) {
+                    n.animTimer += dt * 14; const sw = Math.sin(n.animTimer);
+                    n.leftArm.rotation.x = -sw * 0.78;
+                    n.rightLeg.rotation.x = -sw * 0.78;
+                    n.leftLeg.rotation.x = sw * 0.78;
+                } else {
+                    n.leftArm.rotation.x *= 0.85;
+                    n.leftLeg.rotation.x *= 0.85;
+                    n.rightLeg.rotation.x *= 0.85;
+                }
+                updateNPCHealthBar(n);
             }
         }
 
@@ -6709,6 +7019,7 @@
             netPeer = null;
             isHost = false;
             netJoined = false;
+            netBotSyncActive = false;   // the mirrored roster now simulates locally
             clearRemotePlayers();
         }
 
@@ -7396,58 +7707,39 @@
             // edge and centered along the other axis, spread apart. A 1-stud-thick,
             // 2-stud-wide brown walkway (map color + wood texture) bridges the tops
             // of the two trusses.
+            // THE TRUSS MODEL + CLIMBING: this is the engine's original createTruss()
+            // lattice - a 2x2x2 unit of 12 skeleton sticks + 4 45-degree braces + an
+            // invisible climbable collision cube - stacked TRUSS_HEIGHT/2 units tall.
+            // Every mesh registers in ladderObjs, so the engine's climb physics are
+            // live: walk into the lattice and you climb it, jump to launch off it,
+            // and at the top you mount onto the walkway.
             const TRUSS_HEIGHT = 14;
+            const TRUSS_UNITS = TRUSS_HEIGHT / 2;                     // 2-stud engine truss units
             const NP_CZ = HALF_L + POLE_LEN + EXT_PLAT_SIZE / 2;   // north platform center Z
             const SP_CZ = -(HALF_L + POLE_LEN + EXT_PLAT_SIZE / 2); // south platform center Z
-            const trussCanvas = document.createElement('canvas');
-            trussCanvas.width = 64; trussCanvas.height = 64;
-            {
-                const tx = trussCanvas.getContext('2d');
-                tx.fillStyle = '#b6b6b6'; tx.fillRect(0, 0, 64, 64);
-                tx.strokeStyle = '#7c7c7c'; tx.lineWidth = 5;
-                tx.strokeRect(2.5, 2.5, 59, 59);
-                tx.beginPath();
-                tx.moveTo(3, 3); tx.lineTo(61, 61);       // X brace
-                tx.moveTo(61, 3); tx.lineTo(3, 61);
-                tx.stroke();
-                tx.fillStyle = '#9a9a9a';
-                tx.fillRect(0, 28, 64, 8);                // horizontal bar
-            }
-            const mkTrussTex = (rx, ry) => {
-                const t = new THREE.CanvasTexture(trussCanvas);
-                t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping;
-                t.repeat.set(rx, ry);
-                t.colorSpace = THREE.SRGBColorSpace;
-                t.anisotropy = renderer.capabilities.getMaxAnisotropy();
-                return t;
-            };
-            const trussSideMat = new THREE.MeshStandardMaterial({ map: mkTrussTex(1, TRUSS_HEIGHT / 2), roughness: 0.75, metalness: 0.05 });
-            const trussCapMat = new THREE.MeshStandardMaterial({ map: mkTrussTex(1, 1), roughness: 0.75, metalness: 0.05 });
-            const trussMats = [trussSideMat, trussSideMat, trussCapMat, trussCapMat, trussSideMat, trussSideMat];
-            // Walkway materials: brown wood tiles running along its 80-stud length.
+            // Walkway materials: brown wood tiles running along its 78-stud length.
             const wwEnd = registerTexMat(2 / tile, 1 / tile);
-            const wwSide = registerTexMat(80 / tile, 1 / tile);
-            const wwTop = registerTexMat(80 / tile, 2 / tile);
-            aoState.materials.push(trussSideMat, trussCapMat, wwEnd, wwSide, wwTop);
+            const wwSide = registerTexMat(78 / tile, 1 / tile);
+            const wwTop = registerTexMat(78 / tile, 2 / tile);
+            aoState.materials.push(wwEnd, wwSide, wwTop);
             const buildTrussStructure = (cz) => {
                 [-40, 40].forEach(cx => {                 // 10 studs in from the platform's sides
-                    const truss = new THREE.Mesh(new THREE.BoxGeometry(2, TRUSS_HEIGHT, 2), trussMats);
-                    truss.position.set(cx, PLATFORM_TOP_Y + TRUSS_HEIGHT / 2, cz);
-                    truss.castShadow = true; truss.receiveShadow = true;
-                    truss.userData.topY = PLATFORM_TOP_Y + TRUSS_HEIGHT;
-                    truss.userData.size = new THREE.Vector3(2, TRUSS_HEIGHT, 2);
-                    scene.add(truss);
-                    collisionObjs.push(truss);
-                    aoState.receivers.push(truss);
-                    aoState.occluders.push(truss);
+                    for (let i = 0; i < TRUSS_UNITS; i++) {
+                        const unit = createTruss(0xb6b6b6);            // the engine truss lattice
+                        unit.position.set(cx, PLATFORM_TOP_Y + 1 + i * 2, cz);
+                        scene.add(unit);
+                    }
                 });
-                // Walkway spanning between the truss tops: 1 thick, 2 wide, brown,
-                // same texture as the map.
-                const walk = new THREE.Mesh(new THREE.BoxGeometry(80, 1, 2), [wwEnd, wwEnd, wwTop, wwTop, wwSide, wwSide]);
-                walk.position.set(0, PLATFORM_TOP_Y + TRUSS_HEIGHT + 0.5, cz);
+                // Walkway bridging the truss tops: 1 thick, 2 wide, brown, same wood
+                // texture as the map. Its TOP is flush with the truss tops and it
+                // spans between the two 2x2 truss footprints (x -39..39) so the
+                // climb mount lands on the open truss top and steps straight onto
+                // the bridge at the same height.
+                const walk = new THREE.Mesh(new THREE.BoxGeometry(78, 1, 2), [wwEnd, wwEnd, wwTop, wwTop, wwSide, wwSide]);
+                walk.position.set(0, PLATFORM_TOP_Y + TRUSS_HEIGHT - 0.5, cz);
                 walk.castShadow = true; walk.receiveShadow = true;
-                walk.userData.topY = PLATFORM_TOP_Y + TRUSS_HEIGHT + 1;
-                walk.userData.size = new THREE.Vector3(80, 1, 2);
+                walk.userData.topY = PLATFORM_TOP_Y + TRUSS_HEIGHT;
+                walk.userData.size = new THREE.Vector3(78, 1, 2);
                 scene.add(walk);
                 collisionObjs.push(walk);
                 aoState.receivers.push(walk);
@@ -7889,7 +8181,11 @@
 
                     if (isCurrentlyClimbing) {
                         let stillClimbing = false;
-                        const yLevels = [playerPos.y - 1.5, playerPos.y - 3.0, playerPos.y - 4.5];
+                        // Ankle ray added (feet + 0.2): without it the torso rays go
+                        // past the top of a truss before the feet ever reach mount
+                        // range, so the mount branch could never fire and the climb
+                        // always ended in a drop beside the column.
+                        const yLevels = [playerPos.y - 1.5, playerPos.y - 3.0, playerPos.y - 4.5, playerPos.y - 5.3];
                         for (let y of yLevels) {
                             const origin = new THREE.Vector3(playerPos.x, y, playerPos.z);
                             wallRay.set(origin, currentClimbDir);
@@ -7920,6 +8216,13 @@
                         if (isCurrentlyClimbing) {
                             if (playerPos.y - 5.5 >= climbTopY - 0.5) {
                                 playerPos.y = climbTopY + 5.5;
+                                // Land ON the truss: pull the climber well past the
+                                // face so the body's center finishes over the 2x2
+                                // column footprint (any hug distance 0.1..1.2 studs
+                                // out lands safely inside with this pull) instead of
+                                // tipping off the side and falling back down.
+                                playerPos.x += currentClimbDir.x * 1.3;
+                                playerPos.z += currentClimbDir.z * 1.3;
                                 if (moveKeys.w || moveKeys.a || moveKeys.d || moveKeys.s || joystickVector.length() > 0) {
                                     playerPos.x += moveDelta.x;
                                     playerPos.z += moveDelta.z;
@@ -7939,6 +8242,13 @@
                                 if (joystickVector.y > 0.5) climbDelta -= 11.2 * dt * upDir;
                                 
                                 if (climbDelta > 0) {
+                                    // Cap the rise so the feet can never JUMP past the
+                                    // mount window (top-0.5..top-0.2) in one low-fps
+                                    // step: pausing 0.25 below the hit mesh's top lets
+                                    // the next frame's rays still see the lattice and
+                                    // fire the mount deterministically.
+                                    const mountCap = climbTopY - 0.25 - (playerPos.y - 5.5);
+                                    if (mountCap > 0) climbDelta = Math.min(climbDelta, mountCap);
                                     ceilingRay.set(new THREE.Vector3(playerPos.x, playerPos.y - 0.2, playerPos.z), new THREE.Vector3(0, 1, 0));
                                     const cHHits = ceilingRay.intersectObjects(collisionObjs);
                                     if (cHHits.length > 0 && cHHits[0].distance < 0.9) climbDelta = 0;
@@ -7977,11 +8287,17 @@
                         }
                     } else {
                         const climbCheckDir = moveDir.length() > 0 ? moveDir : new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), camYaw);
+                        // The climb probe must reach at least as far as the wall
+                        // collision's stop distance (body radius + this frame's
+                        // travel), otherwise a low frame rate leaves a dead band
+                        // where the player is wall-blocked at the truss face but
+                        // still outside climb range - stuck walking in place.
+                        const climbReach = Math.max(1.2, moveSpeed * dt + 0.6);
                         const yLevels = [playerPos.y - 1.5, playerPos.y - 3.0, playerPos.y - 4.5];
                         for (let y of yLevels) {
                             const origin = new THREE.Vector3(playerPos.x, y, playerPos.z);
                             wallRay.set(origin, climbCheckDir);
-                            wallRay.far = 1.2;
+                            wallRay.far = climbReach;
                             const hits = wallRay.intersectObjects(collisionObjs);
                             if (hits.length > 0) {
                                 const hit = hits[0];
@@ -7998,11 +8314,20 @@
                                 if (isClimbable && playerPos.y - 5.5 < topY - 0.1) {
                                     const originStep = new THREE.Vector3(playerPos.x, playerPos.y - 3.3, playerPos.z);
                                     wallRay.set(originStep, climbCheckDir);
-                                    wallRay.far = 1.2;
+                                    wallRay.far = climbReach;
                                     const hitsStep = wallRay.intersectObjects(collisionObjs);
                                     if (hitsStep.length > 0) {
                                         isCurrentlyClimbing = true;
                                         currentClimbDir.copy(climbCheckDir);
+                                        // Normalize the hug distance: pull the player to
+                                        // ~1.1 studs off the face so the maintain probe
+                                        // (far 1.2) keeps seeing it even when the climb
+                                        // started from farther out at a low frame rate.
+                                        const hugPull = hit.distance - 1.1;
+                                        if (hugPull > 0) {
+                                            playerPos.x -= climbCheckDir.x * hugPull;
+                                            playerPos.z -= climbCheckDir.z * hugPull;
+                                        }
                                         break;
                                     }
                                 }
@@ -8046,9 +8371,15 @@
                                 }
                             } else {
                                 // Air momentum: releasing ALL movement input mid-air stops the
-                                // player IMMEDIATELY; turn accel only while steering.
-                                if (!hasMoveInput) airHorizontalVel.set(0, 0, 0);
-                                const desired = hasMoveInput ? moveDir.clone().multiplyScalar(moveSpeed) : null;
+                                // player IMMEDIATELY; turn accel only while steering. A live
+                                // truss launch grace exempts the launch COMPLETELY: no zeroing
+                                // and no steering - the player was holding W to climb, and
+                                // without this the turn accel would steer the 13-stud flight
+                                // right back into the truss mid-air.
+                                if (playerLaunchGrace > 0) playerLaunchGrace -= dt;
+                                if (!hasMoveInput && playerLaunchGrace <= 0) airHorizontalVel.set(0, 0, 0);
+                                const steerAllowed = playerLaunchGrace <= 0;
+                                const desired = (steerAllowed && hasMoveInput) ? moveDir.clone().multiplyScalar(moveSpeed) : null;
                                 if (desired) {
                                     const curSp = airHorizontalVel.length();
                                     if (curSp > 0.0001) {
@@ -8228,7 +8559,7 @@
                             standingStillState = 0; standingStillTimer = 0;
                         } else if (isWalking) {
                             playWalkSound();
-                            animTimer += dt * (isHoldingSpeedCoil ? 22 : 11); 
+                            animTimer += dt * (isHoldingSpeedCoil ? 22 : 11) * ((isHoldingSpeedCoil ? 32 : (window.iySpeed || 16)) / 16); 
                             const sw = Math.sin(animTimer);
                             
                             const legMid = THREE.MathUtils.degToRad(12.5);
@@ -8396,17 +8727,25 @@
                             // LAUNCH BACKWARDS 13 STUDS: solve the ballistic flight time for
                             // vy = 62.6 down to the landing height below, then set the
                             // horizontal launch speed so the flight covers the remaining
-                            // 11 studs (2-stud un-stick + 11 in flight = 13 total).
+                            // distance. The jump shift itself moves the player 2.0 studs
+                            // off the face and the de-stick below another 1.0 - together
+                            // 3 studs - so the airborne arc carries the final 10 and the
+                            // TOTAL backwards travel is exactly 13 studs.
                             floorRay.set(new THREE.Vector3(playerPos.x, playerPos.y - 2, playerPos.z), new THREE.Vector3(0, -1, 0));
+                            floorRay.far = 300;   // .set() does NOT reset .far - the bots' 4-stud floor probe shrinks it otherwise
                             const landHits = floorRay.intersectObjects(collisionObjs);
                             let flightTime = 2 * 62.6 / (GRAVITY * gravityScale);
                             if (landHits.length > 0 && landHits[0].distance < 300) {
                                 const dropY = playerPos.y - (landHits[0].point.y + 5.5);
                                 if (dropY > 0) { flightTime = (62.6 + Math.sqrt(62.6 * 62.6 + 2 * GRAVITY * gravityScale * dropY)) / (GRAVITY * gravityScale); }
                             }
-                            const launchSpeed = (13 - 2) / flightTime;
+                            const launchSpeed = (13 - 3) / flightTime;
                             playerVel.x = 0; playerVel.z = 0;
                             airHorizontalVel.copy(backDir).multiplyScalar(launchSpeed);
+                            // Keep the launch alive even if every movement key is
+                            // released the instant the jump fires (the airborne
+                            // branch would otherwise zero airHorizontalVel).
+                            playerLaunchGrace = flightTime + 0.1;
                             isCurrentlyClimbing = false;
                             isGrounded = false;      // leave the ground state immediately
                             lastGroundedTime = 0;
@@ -8805,7 +9144,8 @@
                 #iy-cmdlist { width: 100%; height: 200px; background: #22232b; position: relative; overflow: hidden; }
                 #iy-img { width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0; transition: opacity 1.5s ease; z-index: 2; }
                 #iy-cmds { padding: 10px; color: #aaa; font-family: monospace; font-size: 12px; overflow-y: auto; height: 100%; box-sizing: border-box; }
-                #iy-cmds::-webkit-scrollbar { width: 0; }
+                #iy-cmds::-webkit-scrollbar { width: 5px; }
+                #iy-cmds::-webkit-scrollbar-thumb { background: #555; border-radius: 3px; }
                 
                 #iy-toggle {
                     position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
@@ -8850,6 +9190,80 @@
                     .script-tab { padding: 4px 8px; font-size: 12px; max-width: 80px; gap: 4px; }
                     .exec-btn { padding: 8px; font-size: 12px; }
                     #iy-container { right: 70px; width: 250px; }
+                }
+
+                /* IY command row: bar + explicit RUN button (mobile has no Enter key) */
+                #iy-cmdrow { display: flex; gap: 6px; margin: 0 10px 10px 10px; align-items: stretch; }
+                #iy-cmdbar { flex: 1; width: auto; margin: 0; }
+                #iy-run-btn {
+                    background: #404252; color: #ccc; border-radius: 0px !important; padding: 0 12px;
+                    display: flex; align-items: center; cursor: pointer; font-family: sans-serif;
+                    font-size: 12px; font-weight: bold; flex-shrink: 0; transition: filter 0.2s;
+                    user-select: none;
+                }
+                #iy-run-btn:hover { filter: brightness(1.25); }
+                #iy-run-btn:active { filter: brightness(1.45); }
+
+                /* CLOUD / SCRIPTS panel: same gray theme as the executor */
+                #panel-cloud {
+                    background: #22232b; border-radius: 15px; padding: 18px; box-sizing: border-box;
+                    display: flex; flex-direction: column; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+                }
+                #cloud-search {
+                    display: flex; align-items: center; gap: 10px; height: 46px; padding: 0 14px;
+                    background: #2c2e38; border: 2px solid #404252; border-radius: 10px; box-sizing: border-box;
+                    flex-shrink: 0;
+                }
+                #cloud-search svg { width: 24px; height: 24px; flex-shrink: 0; }
+                #cloud-search-input {
+                    flex: 1; background: transparent; border: none; outline: none; color: #bcbfe6;
+                    font-family: sans-serif; font-size: 15px; min-width: 0;
+                }
+                #cloud-search-input::placeholder { color: #9a9cb4; }
+                #cloud-grid {
+                    display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;
+                    overflow-y: auto; margin-top: 14px; flex: 1; align-content: start;
+                }
+                #cloud-grid::-webkit-scrollbar { width: 8px; }
+                #cloud-grid::-webkit-scrollbar-thumb { background: #404252; border-radius: 4px; }
+                .cloud-script-box {
+                    background: #2c2e38; border-radius: 12px; padding: 14px 12px; cursor: pointer;
+                    transition: filter 0.2s, transform 0.1s; display: flex; flex-direction: column; min-height: 92px;
+                }
+                .cloud-script-box:hover { filter: brightness(1.2); }
+                .cloud-script-box:active { transform: scale(0.98); }
+                .csb-name { color: #ffffff; font-weight: bold; font-size: 14px; font-family: sans-serif; text-align: left; }
+                .csb-desc {
+                    color: rgba(235, 235, 245, 0.55); font-size: 12px; font-family: sans-serif;
+                    margin-top: 6px; line-height: 1.4; text-align: left; white-space: pre-line;
+                }
+
+                /* Script menu: darkened screen + menu that fades and slides in from the bottom */
+                #script-menu-overlay {
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                    background: rgba(0, 0, 0, 0.6); z-index: 880; opacity: 0; pointer-events: none;
+                    transition: opacity 0.25s ease;
+                }
+                #script-menu-overlay.active { opacity: 1; pointer-events: auto; }
+                #script-menu {
+                    position: fixed; left: 0; right: 0; bottom: 0; z-index: 881;
+                    background: #22232b; border-radius: 18px 18px 0 0; padding: 20px;
+                    display: flex; gap: 12px; box-sizing: border-box;
+                    transform: translateY(100%); opacity: 0;
+                    transition: transform 0.3s ease, opacity 0.25s ease;
+                }
+                #script-menu.active { transform: translateY(0); opacity: 1; }
+                .sm-btn {
+                    flex: 1; padding: 16px 8px; border-radius: 12px; text-align: center; cursor: pointer;
+                    font-family: sans-serif; font-size: 14px; font-weight: bold; box-sizing: border-box;
+                    transition: filter 0.2s;
+                }
+                .sm-btn:hover { filter: brightness(1.15); }
+                .sm-copy, .sm-edit { background: #22232b; border: 2px solid #bcbfe6; color: #bcbfe6; }
+                .sm-exec { background: #03abff; border: 2px solid #03abff; color: #ffffff; }
+                @media (max-width: 600px) {
+                    .sm-btn { font-size: 11px; padding: 14px 4px; }
+                    #script-menu { gap: 8px; padding: 14px; }
                 }
             `;
             document.head.appendChild(style);
@@ -8945,10 +9359,10 @@ ONLY deltaexploits.gg IS REAL!`;
             const editor = executorPanel.querySelector('#editor-textarea');
             editor.setAttribute('placeholder', placeholderText);
             
-            // Generic Panels for other buttons
+            // Generic Panels for the other buttons (the CLOUD button gets a
+            // real script browser below)
             const genericPanels = {
                 house: 'Home Content',
-                cloud: 'Cloud Content',
                 settings: 'Settings Content',
                 terminal: 'Terminal Content'
             };
@@ -8960,6 +9374,126 @@ ONLY deltaexploits.gg IS REAL!`;
                 p.innerHTML = `<h1>${genericPanels[id]}</h1>`;
                 document.body.appendChild(p);
             });
+
+            // ==========================================================
+            // CLOUD / SCRIPTS TAB
+            // Rounded script boxes in rows of 3 (gray theme). The search bar
+            // spans the width of 3 boxes; typing filters the boxes and an
+            // empty bar shows every script. Clicking a box darkens the screen
+            // and slides a bottom menu in with Copy / Edit / Execute.
+            // ==========================================================
+            const SCRIPT_SOURCES = [
+                { name: 'Reach/kill aura', desc: 'Reach hacks', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLQgG'))()", run: () => { if (window.initReachScript) window.initReachScript(); } },
+                { name: 'FLY GUI V3 / V4 (GUI MOBILE)', desc: 'fly\nfly script', code: 'loadstring(game:HttpGet("https://luau.pro/storage/FLY-GUI.lua"))()', run: () => { if (window.initFlyGUI) window.initFlyGUI(); } },
+                { name: 'REACH V3', desc: 'reach hack gui v3', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLBuK'))()", run: () => { if (window.initReachV3) window.initReachV3(); } }
+            ];
+
+            const cloudPanel = document.createElement('div');
+            cloudPanel.id = 'panel-cloud';
+            cloudPanel.className = 'content-panel';
+            cloudPanel.innerHTML = `
+                <div id="cloud-search">
+                    <svg viewBox="0 0 24 24"><path fill="#9a9cb4" d="M19 14h-1.5a2.5 2.5 0 0 0-2.5-2.5H10A4.5 4.5 0 1 0 6.5 17H19a3 3 0 0 0 0-6z"/></svg>
+                    <input id="cloud-search-input" placeholder="Search scriptblox.com" spellcheck="false" autocomplete="off">
+                </div>
+                <div id="cloud-grid"></div>
+            `;
+            document.body.appendChild(cloudPanel);
+
+            const cloudGrid = cloudPanel.querySelector('#cloud-grid');
+            const cloudSearchInput = cloudPanel.querySelector('#cloud-search-input');
+
+            function renderScriptBoxes() {
+                const q = (cloudSearchInput.value || '').trim().toLowerCase();
+                cloudGrid.innerHTML = '';
+                SCRIPT_SOURCES.forEach(src => {
+                    const hay = (src.name + ' ' + src.desc).toLowerCase();
+                    if (q && hay.indexOf(q) === -1) return;   // hide non-matching scripts
+                    const box = document.createElement('div');
+                    box.className = 'cloud-script-box';
+                    const nameEl = document.createElement('div');
+                    nameEl.className = 'csb-name';
+                    nameEl.textContent = src.name;            // white name, top left
+                    const descEl = document.createElement('div');
+                    descEl.className = 'csb-desc';
+                    descEl.textContent = src.desc;            // smaller faded description
+                    box.appendChild(nameEl);
+                    box.appendChild(descEl);
+                    box.addEventListener('click', () => openScriptMenu(src));
+                    cloudGrid.appendChild(box);
+                });
+            }
+            cloudSearchInput.addEventListener('input', renderScriptBoxes);
+
+            // --- script menu: darkened screen + slide-in bottom sheet ---
+            const scriptOverlay = document.createElement('div');
+            scriptOverlay.id = 'script-menu-overlay';
+            const scriptMenu = document.createElement('div');
+            scriptMenu.id = 'script-menu';
+            scriptMenu.innerHTML = `
+                <div class="sm-btn sm-copy">Copy selected script</div>
+                <div class="sm-btn sm-edit">Edit selected script</div>
+                <div class="sm-btn sm-exec">Execute selected script</div>
+            `;
+            document.body.appendChild(scriptOverlay);
+            document.body.appendChild(scriptMenu);
+
+            let selectedScript = null;
+            function openScriptMenu(src) {
+                selectedScript = src;
+                scriptOverlay.classList.add('active');
+                scriptMenu.classList.add('active');
+            }
+            function closeScriptMenu() {
+                scriptOverlay.classList.remove('active');
+                scriptMenu.classList.remove('active');
+            }
+            scriptOverlay.addEventListener('click', closeScriptMenu);
+
+            // Copy: puts the script's loadstring on the clipboard
+            scriptMenu.querySelector('.sm-copy').addEventListener('click', () => {
+                if (!selectedScript) return;
+                const code = selectedScript.code;
+                const fallbackCopy = () => {
+                    // legacy path for non-secure contexts (file:// etc.)
+                    const ta = document.createElement('textarea');
+                    ta.value = code; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                    document.body.appendChild(ta); ta.select();
+                    let ok = false;
+                    try { ok = document.execCommand('copy'); } catch (e2) {}
+                    ta.remove();
+                    return ok;
+                };
+                // If the clipboard permission prompt hangs (headless / denied),
+                // time out and use the legacy copy path instead.
+                const tryModern = (navigator.clipboard && navigator.clipboard.writeText)
+                    ? navigator.clipboard.writeText(code).then(() => true).catch(() => false)
+                    : Promise.resolve(false);
+                Promise.race([tryModern, new Promise(res => setTimeout(() => res(null), 900))]).then(ok => {
+                    if (ok === null) ok = fallbackCopy();
+                    if (typeof addSystemChat === 'function') addSystemChat(ok ? ('Copied: ' + selectedScript.name) : 'Copy failed');
+                    closeScriptMenu();
+                });
+            });
+            // Edit: script goes into the editor, tab named after the script
+            scriptMenu.querySelector('.sm-edit').addEventListener('click', () => {
+                if (!selectedScript) return;
+                addTab(selectedScript.name);
+                editor.value = selectedScript.code;
+                closeScriptMenu();
+                sidebar.querySelectorAll('.exploit-btn').forEach(el => el.classList.remove('active'));
+                const exBtn = document.getElementById('btn-executor');
+                if (exBtn) exBtn.classList.add('active');
+                showPanel('executor');
+            });
+            // Execute: runs the selected script right away
+            scriptMenu.querySelector('.sm-exec').addEventListener('click', () => {
+                if (!selectedScript) return;
+                closeScriptMenu();
+                runExecutorCode(selectedScript.code);
+            });
+
+            renderScriptBoxes();
 
             document.body.appendChild(overlay);
             document.body.appendChild(sidebar);
@@ -8995,18 +9529,22 @@ ONLY deltaexploits.gg IS REAL!`;
             let tabs = [0];
             let activeTab = 0;
 
-            function getTabName(num) { return num === 0 ? "script.lua" : `script(${num}).lua`; }
+            const tabOverrides = {};   // tab num -> custom tab name
+            function getTabName(num) { return tabOverrides[num] || (num === 0 ? "script.lua" : `script(${num}).lua`); }
             function getNextTabNum() { let i = 1; while(tabs.includes(i)) i++; return i; }
 
-            function addTab() {
+            function addTab(customName) {
                 let num = getNextTabNum();
                 tabs.push(num);
+                if (customName) tabOverrides[num] = customName;
                 activeTab = num;
                 renderTabs();
+                return num;
             }
 
             function closeTab(num) {
                 tabs = tabs.filter(t => t !== num);
+                delete tabOverrides[num];
                 if (activeTab === num) activeTab = tabs.length > 0 ? tabs[0] : null;
                 renderTabs();
             }
@@ -9036,7 +9574,9 @@ ONLY deltaexploits.gg IS REAL!`;
             // CLEAR    -> empties the editor.
             // CLIPBOARD-> reads the clipboard, pastes it into the editor and runs it.
             const KNOWN_LOADSTRING_SCRIPTS = {
-                '0dnNLQgG': { name: 'Reach Script', run: () => { if (window.initReachScript) window.initReachScript(); } }
+                '0dnNLQgG': { name: 'Reach Script', run: () => { if (window.initReachScript) window.initReachScript(); } },
+                'FLY-GUI': { name: 'FLY GUI V3 / V4', run: () => { if (window.initFlyGUI) window.initFlyGUI(); } },
+                '0dnNLBuK': { name: 'REACH V3', run: () => { if (window.initReachV3) window.initReachV3(); } }
             };
             function runExecutorCode(code) {
                 code = String(code || '').trim();
@@ -9093,8 +9633,10 @@ ONLY deltaexploits.gg IS REAL!`;
                     isDragging = true; toggleBtn.classList.add('dragging');
                 }
                 if (isDragging) {
-                    let newLeft = Math.max(0, Math.min(window.innerWidth - 50, startLeft + dx));
-                    let newTop = Math.max(0, Math.min(window.innerHeight - 50, startTop + dy));
+                    // Almost off screen is allowed - but a 22px strip always stays
+                    // on screen so the button can always be grabbed back.
+                    let newLeft = Math.max(22 - 50, Math.min(window.innerWidth - 22, startLeft + dx));
+                    let newTop = Math.max(22 - 50, Math.min(window.innerHeight - 22, startTop + dy));
                     toggleBtn.style.left = newLeft + 'px'; toggleBtn.style.top = newTop + 'px';
                 }
             };
@@ -9121,7 +9663,10 @@ ONLY deltaexploits.gg IS REAL!`;
             iyContainer.classList.add('hidden');
             iyContainer.innerHTML = `
                 <div id="iy-title">Infinite Yield FE v4.0</div>
-                <input id="iy-cmdbar" placeholder="Command Bar (;)" readonly>
+                <div id="iy-cmdrow">
+                    <input id="iy-cmdbar" placeholder="Command Bar (;)" enterkeyhint="send" readonly>
+                    <div id="iy-run-btn">RUN</div>
+                </div>
                 <div id="iy-cmdlist">
                     <img id="iy-img" src="https://repository-images.githubusercontent.com/230387740/f3658200-3abc-11ea-973a-b024e3a60673">
                     <div id="iy-cmds">
@@ -9463,7 +10008,13 @@ ONLY deltaexploits.gg IS REAL!`;
             };
 
             window.iyPreUpdate = function(dt, now) {
-                if (document.activeElement && (document.activeElement.id === 'iy-cmdbar' || document.activeElement.id === 'chat-input' || document.activeElement.id === 'rg-reach')) {
+                if (document.activeElement && (
+                    document.activeElement.id === 'iy-cmdbar' ||
+                    document.activeElement.id === 'chat-input' ||
+                    document.activeElement.id === 'rg-reach' ||
+                    document.activeElement.id === 'cloud-search-input' ||
+                    (document.activeElement.tagName === 'INPUT' && document.activeElement.closest &&
+                        document.activeElement.closest('#rv3-root, #flygui, #script-menu')))) {
                     moveKeys = { w: false, a: false, s: false, d: false, space: false };
                     flyDown = false;
                 }
@@ -9634,32 +10185,13 @@ ONLY deltaexploits.gg IS REAL!`;
             });
 
             const cmdbar = document.getElementById('iy-cmdbar');
-            cmdbar.addEventListener('keydown', (e) => {
-                e.stopPropagation();
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (cmdbar.value) {
-                        iyPrint(`> ${cmdbar.value}`);
-                        window.runIYCommand(cmdbar.value);
-                    }
-                    cmdbar.value = '';
-                    cmdbar.blur();
-                }
-                if (e.key === 'Escape') {
-                    cmdbar.blur();
-                }
-            });
-
-            cmdbar.addEventListener('blur', () => {
-                cmdbar.setAttribute('readonly', '');
-                cmdbar.value = '';
-                iyContainer.classList.add('hidden');
-            });
 
             // COMMAND FILTER: while typing, only the commands matching the text stay
             // visible (substring match so "way" shows the whole waypoint family);
-            // everything else is hidden. Clearing the bar shows the full list again.
-            cmdbar.addEventListener('input', () => {
+            // everything else is hidden. An EMPTY bar, or pressing Enter/Return, or
+            // tapping RUN resets to the FULL command list - which the player can
+            // scroll through while the panel stays open.
+            function applyCmdFilter() {
                 const q = cmdbar.value.trim().toLowerCase();
                 const cmdsDiv = document.getElementById('iy-cmds');
                 Array.from(cmdsDiv.children).forEach(div => {
@@ -9667,12 +10199,70 @@ ONLY deltaexploits.gg IS REAL!`;
                     const show = !q || t.indexOf(q) !== -1;
                     div.style.display = show ? '' : 'none';
                 });
+            }
+            // Execute whatever is typed, clear the bar, show the FULL list. The
+            // panel is deliberately NOT collapsed afterwards.
+            function runCmdbar() {
+                if (cmdbar.value) {
+                    iyPrint(`> ${cmdbar.value}`);
+                    window.runIYCommand(cmdbar.value);
+                    if (typeof addSystemChat === 'function') addSystemChat('IY: ' + cmdbar.value);
+                }
+                cmdbar.value = '';
+                applyCmdFilter();
+            }
+            cmdbar.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                // Some mobile keyboards report the Go/Return key as keyCode 13
+                // without a usable key value - accept both forms.
+                if (e.key === 'Enter' || e.keyCode === 13) {
+                    e.preventDefault();
+                    runCmdbar();
+                    cmdbar.blur();        // closes the mobile keyboard; panel stays up
+                }
+                if (e.key === 'Escape') {
+                    iyContainer.classList.add('hidden');
+                    cmdbar.blur();
+                }
             });
-
-            document.getElementById('iy-title').addEventListener('click', () => {
+            cmdbar.addEventListener('input', applyCmdFilter);
+            // Tapping the bar itself opens the keyboard (readonly is the resting
+            // state and must be lifted before typing) - this is what made the bar
+            // feel dead on mobile before.
+            cmdbar.addEventListener('mousedown', () => {
+                if (cmdbar.hasAttribute('readonly')) {
+                    iyContainer.classList.remove('hidden');
+                    cmdbar.removeAttribute('readonly');
+                    cmdbar.focus();
+                }
+            });
+            cmdbar.addEventListener('touchend', (e) => {
+                e.stopPropagation(); e.preventDefault();
                 iyContainer.classList.remove('hidden');
                 cmdbar.removeAttribute('readonly');
                 cmdbar.focus();
+            }, { passive: false });
+            // Blur no longer hides the panel - the full list stays visible and
+            // scrollable after executing (Enter / RUN / tapping elsewhere).
+            cmdbar.addEventListener('blur', () => {
+                cmdbar.setAttribute('readonly', '');
+                cmdbar.value = '';
+                applyCmdFilter();
+            });
+            // RUN button: explicit execution for touch devices.
+            const iyRunBtn = document.getElementById('iy-run-btn');
+            if (iyRunBtn) iyRunBtn.addEventListener('click', () => { runCmdbar(); cmdbar.blur(); });
+
+            // Title click TOGGLES the panel: collapsed -> expand + focus the bar,
+            // expanded -> collapse (bottom edge stays flush with the screen).
+            document.getElementById('iy-title').addEventListener('click', () => {
+                if (iyContainer.classList.contains('hidden')) {
+                    iyContainer.classList.remove('hidden');
+                    cmdbar.removeAttribute('readonly');
+                    cmdbar.focus();
+                } else {
+                    iyContainer.classList.add('hidden');
+                }
             });
 
             document.getElementById('iy-exec-btn').addEventListener('click', () => {
@@ -9708,8 +10298,8 @@ ONLY deltaexploits.gg IS REAL!`;
                 const dx = cx - iySX, dy = cy - iySY;
                 if (!iyDrag && Math.sqrt(dx*dx + dy*dy) > 5) { iyDrag = true; iyToggle.classList.add('dragging'); }
                 if (iyDrag) {
-                    iyToggle.style.left = Math.max(0, Math.min(window.innerWidth - 40, iySL + dx)) + 'px';
-                    iyToggle.style.top = Math.max(0, Math.min(window.innerHeight - 40, iyST + dy)) + 'px';
+                    iyToggle.style.left = Math.max(22 - 40, Math.min(window.innerWidth - 22, iySL + dx)) + 'px';
+                    iyToggle.style.top = Math.max(22 - 40, Math.min(window.innerHeight - 22, iyST + dy)) + 'px';
                 }
             };
             const endIYDrag = () => {
@@ -9840,6 +10430,461 @@ ONLY deltaexploits.gg IS REAL!`;
 
             // IY commands drive the same reach state - reflect changes in the GUI
             // whenever it is open (setReachOptions calls this hook itself).
+
+            // ==========================================================
+            // FLY GUI V3 / V4 (GUI MOBILE)
+            // loadstring(game:HttpGet("https://luau.pro/storage/FLY-GUI.lua"))()
+            // A moveable button pad: [X kill][+/- expand] and, expanded,
+            // [UP][speed +][FLY GUI V3 sign] over
+            // [DOWN][speed -][ speed value | FLY ].
+            // Sharp corners, gray outlines, buttons touch edge to edge; each
+            // button is 1.25x longer than tall, the long right column is 2.25x.
+            // Fly speed 1 here moves the player at TWICE the default IY fly
+            // speed (each +1 adds another 2x IY default).
+            // ==========================================================
+            window.initFlyGUI = function() {
+                if (document.getElementById('flygui')) return;   // already loaded
+
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    #flygui { position: fixed; top: 84px; right: 96px; z-index: 860; display: flex; flex-direction: column; touch-action: none; user-select: none; font-family: Arial, Helvetica, sans-serif; }
+                    #flygui .fg-row { display: flex; }
+                    #flygui .fg-btn {
+                        height: 38px; width: 48px;                             /* 1.25x longer than tall */
+                        box-sizing: border-box; border: 2px solid #808080;     /* gray outline, sharp corners */
+                        background: #332f42;                                   /* dark gray with a slight purple tint */
+                        display: flex; align-items: center; justify-content: center;
+                        cursor: pointer; font-size: 24px; font-weight: bold; color: #ffffff;
+                        flex-shrink: 0; position: relative; line-height: 1;
+                    }
+                    #flygui .fg-btn:active { filter: brightness(1.35); }
+                    #flygui .fg-light { background: #45405a; }                  /* slightly lighter (UP/DOWN column) */
+                    #flygui .fg-close { background: #7a1212; }                  /* dark red kill button */
+                    #flygui .fg-close svg { display: block; }
+                    #flygui .fg-long { width: 108px; background: #0a0a0a; }     /* 2.25x the original length, black */
+                    #flygui .fg-sign { color: #ffffff; font-size: 13px; letter-spacing: 0.4px; }
+                    #flygui .fg-signbtn { cursor: default; }
+                    #flygui .fg-signbtn:active { filter: none; }
+                    #flygui .fg-updown { flex-direction: column; gap: 3px; }
+                    #flygui .fg-tri { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; }
+                    #flygui .fg-tri.up { border-bottom: 9px solid #22c55e; }    /* small green equilateral triangle */
+                    #flygui .fg-tri.down { border-top: 9px solid #eab308; }     /* yellow, pointing down */
+                    #flygui .fg-up { color: #22c55e; font-size: 15px; }         /* decently big green UP */
+                    #flygui .fg-down { color: #eab308; font-size: 15px; }       /* yellow DOWN */
+                    #flygui .fg-speedwrap { display: flex; width: 108px; }
+                    #flygui .fg-speedval { width: 40%; background: #0a0a0a; color: #ffffff; font-size: 15px; }   /* left 2/5 */
+                    #flygui .fg-flybtn { width: 60%; background: #03abff; border-left: none; color: #ffffff; font-size: 15px; }  /* right 3/5, blue */
+                    #flygui .fg-speedval, #flygui .fg-flybtn {
+                        height: 38px; box-sizing: border-box; border: 2px solid #808080;
+                        display: flex; align-items: center; justify-content: center; cursor: pointer; font-weight: bold;
+                    }
+                    #flygui .fg-flybtn.on { background: #0288cf; }
+                    #flygui input.fg-speededit {
+                        width: 100%; height: 100%; border: none; outline: none; background: #1a1a1a;
+                        color: #fff; text-align: center; font-size: 14px; font-family: Arial, sans-serif;
+                    }
+                `;
+                document.head.appendChild(style);
+
+                const fg = document.createElement('div');
+                fg.id = 'flygui';
+                fg.innerHTML = `
+                    <div class="fg-row">
+                        <div class="fg-btn fg-close" id="fg-close" title="Kill script">
+                            <svg viewBox="0 0 24 24" width="20" height="20"><path d="M5 5 L19 19 M19 5 L5 19" stroke="#ff3333" stroke-width="3.5" stroke-linecap="round" fill="none"/></svg>
+                        </div>
+                        <div class="fg-btn" id="fg-expand"><span id="fg-expand-sign">+</span></div>
+                    </div>
+                    <div id="fg-extra" style="display:none;">
+                        <div class="fg-row">
+                            <div class="fg-btn fg-light fg-updown fg-up" id="fg-up"><div class="fg-tri up"></div><span>UP</span></div>
+                            <div class="fg-btn" id="fg-sp-plus"><span>+</span></div>
+                            <div class="fg-btn fg-long fg-sign fg-signbtn">FLY GUI V3</div>
+                        </div>
+                        <div class="fg-row">
+                            <div class="fg-btn fg-light fg-updown fg-down" id="fg-down"><div class="fg-tri down"></div><span>DOWN</span></div>
+                            <div class="fg-btn" id="fg-sp-minus"><span>-</span></div>
+                            <div class="fg-speedwrap">
+                                <div class="fg-speedval" id="fg-speedval">1</div>
+                                <div class="fg-flybtn" id="fg-flybtn">FLY</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(fg);
+
+                const fgState = { flying: false, speed: 1, expanded: false };
+                const elExpand = fg.querySelector('#fg-expand');
+                const elExpandSign = fg.querySelector('#fg-expand-sign');
+                const elExtra = fg.querySelector('#fg-extra');
+                const elUp = fg.querySelector('#fg-up');
+                const elDown = fg.querySelector('#fg-down');
+                const elPlus = fg.querySelector('#fg-sp-plus');
+                const elMinus = fg.querySelector('#fg-sp-minus');
+                const elSpeedVal = fg.querySelector('#fg-speedval');
+                const elFlyBtn = fg.querySelector('#fg-flybtn');
+                const elClose = fg.querySelector('#fg-close');
+
+                function applyFlySpeed() {
+                    if (fgState.speed < 1) fgState.speed = 1;          // never below 1
+                    elSpeedVal.textContent = String(fgState.speed);
+                    // fly speed 1 = twice the default IY fly speed
+                    if (fgState.flying) flySpeedMultiplier = fgState.speed * 2;
+                }
+                function setFlying(on) {
+                    fgState.flying = on;
+                    elFlyBtn.classList.toggle('on', on);
+                    if (on) {
+                        isFlyMode = true;
+                        playerVel.set(0, 0, 0);
+                        isCurrentlyClimbing = false;
+                        flySpeedMultiplier = fgState.speed * 2;
+                    } else {
+                        isFlyMode = false;
+                        flyDown = false;
+                        moveKeys.space = false;
+                        charGroup.rotation.order = 'YXZ';
+                        charGroup.rotation.x = 0; charGroup.rotation.z = 0;
+                    }
+                }
+
+                // X button: kills the script and stops the flying
+                elClose.addEventListener('click', () => { setFlying(false); fg.remove(); });
+
+                // +/- button: reveals the other buttons, + becomes -
+                elExpand.addEventListener('click', () => {
+                    fgState.expanded = !fgState.expanded;
+                    elExtra.style.display = fgState.expanded ? '' : 'none';
+                    elExpandSign.textContent = fgState.expanded ? '-' : '+';
+                });
+
+                // fly speed + / - (minimum of 1)
+                elPlus.addEventListener('click', () => { fgState.speed += 1; applyFlySpeed(); });
+                elMinus.addEventListener('click', () => { fgState.speed = Math.max(1, fgState.speed - 1); applyFlySpeed(); });
+
+                // speed value: click to edit it manually (cannot go below 1)
+                elSpeedVal.addEventListener('click', () => {
+                    if (elSpeedVal.querySelector('input')) return;
+                    const inp = document.createElement('input');
+                    inp.className = 'fg-speededit';
+                    inp.type = 'number';
+                    inp.min = '1';
+                    inp.value = String(fgState.speed);
+                    elSpeedVal.textContent = '';
+                    elSpeedVal.appendChild(inp);
+                    inp.focus(); inp.select();
+                    const commit = () => {
+                        if (inp.parentNode !== elSpeedVal) return;   // already committed
+                        let v = parseFloat(inp.value);
+                        if (isNaN(v)) v = fgState.speed;
+                        fgState.speed = Math.max(1, v);
+                        applyFlySpeed();
+                    };
+                    inp.addEventListener('keydown', (e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); commit(); inp.blur(); }
+                    });
+                    inp.addEventListener('blur', commit);
+                });
+
+                // FLY button: makes the player fly
+                elFlyBtn.addEventListener('click', () => setFlying(!fgState.flying));
+
+                // UP / DOWN: press and hold to move (while flying)
+                const setUp = (on) => { if (fgState.flying) moveKeys.space = on; };
+                const setDown = (on) => { if (fgState.flying) flyDown = on; };
+                elUp.addEventListener('pointerdown', (e) => { e.preventDefault(); setUp(true); });
+                elDown.addEventListener('pointerdown', (e) => { e.preventDefault(); setDown(true); });
+                ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => {
+                    elUp.addEventListener(ev, () => setUp(false));
+                    elDown.addEventListener(ev, () => setDown(false));
+                });
+                elFlyBtn.addEventListener('pointerdown', () => { setUp(false); setDown(false); });
+
+                // Moveable: drag the pad anywhere - a 22px strip always stays on
+                // screen so it can always be dragged back.
+                let fgDrag = false, fgDown0 = false, fgSX = 0, fgSY = 0, fgSL = 0, fgST = 0, fgSupp = false;
+                const startFgDrag = (cx, cy) => {
+                    fgDown0 = true; fgDrag = false; fgSX = cx; fgSY = cy;
+                    const r = fg.getBoundingClientRect();
+                    fgSL = r.left; fgST = r.top;
+                };
+                const doFgDrag = (cx, cy) => {
+                    if (!fgDown0) return;
+                    const dx = cx - fgSX, dy = cy - fgSY;
+                    if (!fgDrag && Math.sqrt(dx*dx + dy*dy) > 6) fgDrag = true;
+                    if (fgDrag) {
+                        const keep = 22;
+                        fg.style.left = Math.max(keep - fg.offsetWidth, Math.min(window.innerWidth - keep, fgSL + dx)) + 'px';
+                        fg.style.top = Math.max(keep - fg.offsetHeight, Math.min(window.innerHeight - keep, fgST + dy)) + 'px';
+                        fg.style.right = 'auto';
+                        setUp(false); setDown(false);      // a drag cancels holds
+                    }
+                };
+                const endFgDrag = () => {
+                    if (!fgDown0) return;
+                    if (fgDrag) { fgSupp = true; setTimeout(() => { fgSupp = false; }, 0); }
+                    fgDown0 = false; fgDrag = false;
+                };
+                fg.addEventListener('mousedown', (e) => { startFgDrag(e.clientX, e.clientY); });
+                fg.addEventListener('touchstart', (e) => { const t = e.touches[0]; startFgDrag(t.clientX, t.clientY); }, { passive: true });
+                window.addEventListener('mousemove', (e) => { if (fgDown0) doFgDrag(e.clientX, e.clientY); });
+                window.addEventListener('touchmove', (e) => { if (fgDown0) { const t = e.touches[0]; doFgDrag(t.clientX, t.clientY); } }, { passive: true });
+                window.addEventListener('mouseup', endFgDrag);
+                window.addEventListener('touchend', endFgDrag);
+                // a drag that ends over a button must NOT click that button
+                fg.addEventListener('click', (e) => { if (fgSupp) { e.stopPropagation(); e.preventDefault(); } }, true);
+
+                applyFlySpeed();
+            };
+
+            // ==========================================================
+            // REACH V3
+            // loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLBuK'))()
+            // The upgraded reach script. Big black panel with THICK red
+            // outlines in heavy Inter, left middle of the screen, white +
+            // yellow text. Reach is capped at 15 studs HERE (the engine
+            // itself has no cap). Sliders with typed-value boxes, a
+            // transparency slider for the hitbox visualizer, shape and
+            // visualizer-color cyclers (Rainbow cycles smoothly), zooming
+            // checkboxes and a KILL SCRIPT bar. A movable black/red button
+            // (1.5x the Delta button) toggles the panel: 3 white lines when
+            // shown, a white + when hidden.
+            // ==========================================================
+            window.initReachV3 = function() {
+                if (document.getElementById('rv3-root')) return;   // already loaded
+                setReachOptions({ active: true });
+
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
+                    #rv3-root, #rv3-root * { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-weight: 800; }
+                    #rv3-root {
+                        position: fixed; left: 20px; top: 50%; transform: translateY(-50%);
+                        width: 372px; background: #000000; border: 4px solid #ff2020; border-radius: 16px;
+                        padding: 20px 20px 16px 20px; box-sizing: border-box; z-index: 860;
+                        color: #ffffff; user-select: none;
+                    }
+                    #rv3-root .rv3-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+                    #rv3-root .rv3-label { color: #ffffff; font-size: 17px; width: 112px; flex-shrink: 0; }
+                    #rv3-root .rv3-slider {
+                        flex: 1; -webkit-appearance: none; appearance: none; height: 10px; border-radius: 5px;
+                        background: #2b0c0c; outline: none; border: 2px solid #ff2020; box-sizing: border-box;
+                    }
+                    #rv3-root .rv3-slider::-webkit-slider-thumb {
+                        -webkit-appearance: none; appearance: none; width: 22px; height: 22px;
+                        border-radius: 6px; background: #ff2020; border: 3px solid #7a0f0f; cursor: pointer;
+                    }
+                    #rv3-root .rv3-slider::-moz-range-thumb {
+                        width: 22px; height: 22px; border-radius: 6px; background: #ff2020;
+                        border: 3px solid #7a0f0f; cursor: pointer;
+                    }
+                    #rv3-root .rv3-val {
+                        width: 78px; height: 38px; box-sizing: border-box; background: #000000;
+                        border: 3px solid #ff2020; border-radius: 10px; color: #ffdd33; font-size: 17px;
+                        display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+                    }
+                    #rv3-root .rv3-val input {
+                        width: 100%; height: 100%; border: none; outline: none; background: #160505;
+                        color: #ffdd33; font-family: inherit; font-weight: 800; font-size: 16px;
+                        text-align: center; border-radius: 7px; box-sizing: border-box;
+                    }
+                    #rv3-root .rv3-btn {
+                        width: 100%; box-sizing: border-box; background: #000000; border: 3px solid #ff2020;
+                        border-radius: 12px; color: #ffffff; font-size: 17px; padding: 12px 10px;
+                        text-align: center; cursor: pointer; margin-bottom: 14px; letter-spacing: 0.5px;
+                        transition: background 0.15s;
+                    }
+                    #rv3-root .rv3-btn:hover { background: #1a0505; }
+                    #rv3-root .rv3-checkrow { display: flex; gap: 30px; margin-bottom: 18px; }
+                    #rv3-root .rv3-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+                    #rv3-root .rv3-box {
+                        width: 26px; height: 26px; border: 3px solid #ff2020; border-radius: 7px;
+                        box-sizing: border-box; position: relative; overflow: hidden; flex-shrink: 0;
+                    }
+                    #rv3-root .rv3-fill {
+                        position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px;
+                        background: #ff2020; border-radius: 4px;
+                        transform: scale(0); transition: transform 0.16s ease-out;
+                    }
+                    #rv3-root .rv3-check.on .rv3-fill { transform: scale(1); }
+                    #rv3-root .rv3-checklabel { color: #ffffff; font-size: 17px; }
+                    #rv3-root #rv3-kill {
+                        width: 100%; box-sizing: border-box; background: #000000; border: 3px solid #ff2020;
+                        border-radius: 12px; color: #ff2020; font-size: 19px; padding: 13px;
+                        text-align: center; cursor: pointer; letter-spacing: 1.5px; transition: background 0.15s;
+                    }
+                    #rv3-root #rv3-kill:hover { background: #1a0505; }
+                    #rv3-toggle {
+                        position: fixed; left: 20px; top: 21%; width: 75px; height: 75px; background: #000000;
+                        border: 4px solid #ff2020; border-radius: 14px; z-index: 861; cursor: grab;
+                        display: flex; align-items: center; justify-content: center; user-select: none; touch-action: none;
+                    }
+                    #rv3-toggle.dragging { cursor: grabbing; }
+                    #rv3-toggle .rv3-lines { display: flex; flex-direction: column; gap: 6px; }
+                    #rv3-toggle .rv3-lines span { display: block; width: 38px; height: 5px; background: #ffffff; border-radius: 2px; }
+                    #rv3-toggle .rv3-plus { color: #ffffff; font-size: 46px; font-family: 'Inter', Arial, sans-serif; font-weight: 800; display: none; line-height: 1; }
+                `;
+                document.head.appendChild(style);
+
+                const root = document.createElement('div');
+                root.id = 'rv3-root';
+                root.innerHTML = `
+                    <div class="rv3-row">
+                        <div class="rv3-label">Reach</div>
+                        <input id="rv3-slide-reach" class="rv3-slider" type="range" min="0" max="15" step="0.1" value="3.5">
+                        <div class="rv3-val" id="rv3-val-reach">3.5</div>
+                    </div>
+                    <div class="rv3-row">
+                        <div class="rv3-label">Transparency</div>
+                        <input id="rv3-slide-trans" class="rv3-slider" type="range" min="0" max="1" step="0.01" value="0.75">
+                        <div class="rv3-val" id="rv3-val-trans">0.75</div>
+                    </div>
+                    <div class="rv3-btn" id="rv3-shape">Shape: Line</div>
+                    <div class="rv3-btn" id="rv3-color">Color: Red</div>
+                    <div class="rv3-checkrow">
+                        <div class="rv3-check on" id="rv3-damage"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Damage</div></div>
+                        <div class="rv3-check" id="rv3-viz"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Visualizer</div></div>
+                    </div>
+                    <div id="rv3-kill">KILL SCRIPT</div>
+                `;
+                document.body.appendChild(root);
+
+                const toggle = document.createElement('div');
+                toggle.id = 'rv3-toggle';
+                toggle.title = 'REACH V3';
+                toggle.innerHTML = `<div class="rv3-lines"><span></span><span></span><span></span></div><div class="rv3-plus">+</div>`;
+                document.body.appendChild(toggle);
+
+                const slideReach = root.querySelector('#rv3-slide-reach');
+                const valReach = root.querySelector('#rv3-val-reach');
+                const slideTrans = root.querySelector('#rv3-slide-trans');
+                const valTrans = root.querySelector('#rv3-val-trans');
+                const shapeBtn = root.querySelector('#rv3-shape');
+                const colorBtn = root.querySelector('#rv3-color');
+                const dmgCheck = root.querySelector('#rv3-damage');
+                const vizCheck = root.querySelector('#rv3-viz');
+                const killBtn = root.querySelector('#rv3-kill');
+                const RV3_SHAPES = ['Line', 'Sphere', 'Box'];
+                const RV3_COLORS = ['Red', 'Blue', 'White', 'Green', 'Yellow', 'Purple', 'Orange', 'Rainbow'];
+
+                // Click a value box -> type any value (reach is capped at 15 here)
+                function editableVal(box, current, commit) {
+                    box.innerHTML = '';
+                    const inp = document.createElement('input');
+                    inp.value = String(current);
+                    box.appendChild(inp);
+                    inp.focus(); inp.select();
+                    const done = () => {
+                        if (inp.parentNode !== box) return;   // already committed
+                        const v = parseFloat(inp.value);
+                        box.textContent = '';                 // swap the input out
+                        commit(isNaN(v) ? current : v);
+                    };
+                    inp.addEventListener('keydown', (e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); done(); inp.blur(); }
+                    });
+                    inp.addEventListener('blur', done);
+                }
+
+                slideReach.addEventListener('input', () => {
+                    setReachOptions({ value: Math.min(15, Math.max(0, parseFloat(slideReach.value))) });
+                    syncRV3();
+                });
+                valReach.addEventListener('click', () => {
+                    editableVal(valReach, reachState.value, (v) => {
+                        setReachOptions({ value: Math.min(15, Math.max(0, v)) });   // max 15 in V3
+                        syncRV3();
+                    });
+                });
+                slideTrans.addEventListener('input', () => {
+                    setReachOptions({ vizTransparency: Math.min(1, Math.max(0, parseFloat(slideTrans.value))) });
+                    syncRV3();
+                });
+                valTrans.addEventListener('click', () => {
+                    editableVal(valTrans, reachState.vizTransparency, (v) => {
+                        setReachOptions({ vizTransparency: Math.min(1, Math.max(0, v)) });
+                        syncRV3();
+                    });
+                });
+                shapeBtn.addEventListener('click', () => {
+                    const idx = RV3_SHAPES.indexOf(reachState.shape);
+                    setReachOptions({ shape: RV3_SHAPES[(idx + 1) % RV3_SHAPES.length] });
+                    syncRV3();
+                });
+                colorBtn.addEventListener('click', () => {
+                    const idx = RV3_COLORS.indexOf(reachState.vizColor);
+                    setReachOptions({ vizColor: RV3_COLORS[(idx + 1) % RV3_COLORS.length] });
+                    syncRV3();
+                });
+                dmgCheck.addEventListener('click', () => { setReachOptions({ damage: !reachState.damage }); syncRV3(); });
+                vizCheck.addEventListener('click', () => { setReachOptions({ visualizer: !reachState.visualizer }); syncRV3(); });
+
+                function syncRV3() {
+                    // value boxes may hold an <input> mid-edit - never stomp it
+                    if (!(valReach.firstChild && valReach.firstChild.tagName === 'INPUT'))
+                        valReach.textContent = String(Math.round(reachState.value * 10) / 10);
+                    if (!(valTrans.firstChild && valTrans.firstChild.tagName === 'INPUT'))
+                        valTrans.textContent = String(Math.round(reachState.vizTransparency * 100) / 100);
+                    slideReach.value = String(Math.min(15, Math.max(0, reachState.value)));
+                    slideTrans.value = String(reachState.vizTransparency);
+                    shapeBtn.textContent = 'Shape: ' + reachState.shape;
+                    colorBtn.textContent = 'Color: ' + reachState.vizColor;
+                    dmgCheck.classList.toggle('on', reachState.damage);
+                    vizCheck.classList.toggle('on', reachState.visualizer);
+                }
+                window.updateReachV3GUI = syncRV3;
+
+                // KILL SCRIPT: removes and kills the script, resets the hitbox
+                killBtn.addEventListener('click', () => {
+                    setReachOptions({ active: false, value: 3.5, shape: 'Line', damage: true, visualizer: false, vizTransparency: 0.75, vizColor: 'Red' });
+                    if (reachVizMesh && reachVizMesh.parent) { reachVizMesh.parent.remove(reachVizMesh); reachVizMesh = null; }
+                    window.updateReachV3GUI = null;
+                    root.remove();
+                    toggle.remove();
+                });
+
+                // Toggle button: hide/show the panel (3 lines <-> white +), and
+                // it is movable - a 22px strip always stays grabbable on screen.
+                let uiShown = true;
+                const linesEl = toggle.querySelector('.rv3-lines');
+                const plusEl = toggle.querySelector('.rv3-plus');
+                function applyToggleVisual() {
+                    linesEl.style.display = uiShown ? 'flex' : 'none';
+                    plusEl.style.display = uiShown ? 'none' : 'block';
+                    root.style.display = uiShown ? '' : 'none';
+                }
+                let rv3Drag = false, rv3Down0 = false, rv3SX = 0, rv3SY = 0, rv3SL = 0, rv3ST = 0;
+                const startRv3Drag = (cx, cy) => {
+                    rv3Down0 = true; rv3Drag = false; rv3SX = cx; rv3SY = cy;
+                    const r = toggle.getBoundingClientRect();
+                    rv3SL = r.left; rv3ST = r.top;
+                };
+                const doRv3Drag = (cx, cy) => {
+                    if (!rv3Down0) return;
+                    const dx = cx - rv3SX, dy = cy - rv3SY;
+                    if (!rv3Drag && Math.sqrt(dx*dx + dy*dy) > 6) { rv3Drag = true; toggle.classList.add('dragging'); }
+                    if (rv3Drag) {
+                        const keep = 22;
+                        toggle.style.left = Math.max(keep - 75, Math.min(window.innerWidth - keep, rv3SL + dx)) + 'px';
+                        toggle.style.top = Math.max(keep - 75, Math.min(window.innerHeight - keep, rv3ST + dy)) + 'px';
+                    }
+                };
+                const endRv3Drag = () => {
+                    if (!rv3Down0) return;
+                    if (!rv3Drag) { uiShown = !uiShown; applyToggleVisual(); }
+                    rv3Down0 = false; rv3Drag = false; toggle.classList.remove('dragging');
+                };
+                toggle.addEventListener('mousedown', (e) => { if (e.button !== 0) return; startRv3Drag(e.clientX, e.clientY); e.preventDefault(); });
+                window.addEventListener('mousemove', (e) => { if (rv3Down0) doRv3Drag(e.clientX, e.clientY); });
+                window.addEventListener('mouseup', endRv3Drag);
+                toggle.addEventListener('touchstart', (e) => { const t = e.touches[0]; startRv3Drag(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
+                window.addEventListener('touchmove', (e) => { if (rv3Down0) { const t = e.touches[0]; doRv3Drag(t.clientX, t.clientY); } }, { passive: false });
+                window.addEventListener('touchend', endRv3Drag);
+
+                syncRV3();
+            };
         }
 
         function gameTick() {
@@ -9861,24 +10906,39 @@ ONLY deltaexploits.gg IS REAL!`;
             // tunnel through the floor on large ticks (hidden tab / slow frames).
             if (isRunning) {
                 if (npcLungeSoundCd > 0) npcLungeSoundCd -= Math.min(dt, 0.1);
-                const npcDt = Math.min(dt, 0.1);
-                const npcSteps = Math.max(1, Math.ceil(npcDt / 0.033));
-                const npcStep = npcDt / npcSteps;
-                for (let s = 0; s < npcSteps; s++) {
-                    for (let i = 0; i < npcs.length; i++) updateNPC(npcStep, npcs[i]);
+                if (netClientMode()) {
+                    // CLIENT: bots are mirrors of the host's server - no AI, no
+                    // physics, no local damage. Just smooth interpolation of the
+                    // 10Hz snapshots plus all the purely visual updates.
+                    updateNetBots(Math.min(dt, 0.1));
+                } else {
+                    const npcDt = Math.min(dt, 0.1);
+                    const npcSteps = Math.max(1, Math.ceil(npcDt / 0.033));
+                    const npcStep = npcDt / npcSteps;
+                    for (let s = 0; s < npcSteps; s++) {
+                        for (let i = 0; i < npcs.length; i++) updateNPC(npcStep, npcs[i]);
+                    }
+                }
+                // HOST STREAMING: the authoritative bot server is broadcast to the
+                // clients - 10Hz state snapshots + a periodic identity/stat roster.
+                if (hostHasClients()) {
+                    netBotSnapshotTimer += Math.min(dt, 0.5);
+                    if (netBotSnapshotTimer >= 0.1) { netBotSnapshotTimer = 0; sendBotSnapshot(); }
+                    netBotInfoTimer += Math.min(dt, 0.5);
+                    if (netBotInfoTimer >= 8) { netBotInfoTimer = 0; sendBotInfo(); }
                 }
                 // Kill plane: the player fell off the map into the void - after ~40
                 // studs of falling they die instantly and the character disappears.
                 if (!isRagdoll && playerPos.y < KILL_PLANE_Y) executeVoidDeath();
-                // Population shifts on MINUTE cadence: 1 person joins or leaves
-                // every 5 minutes, 2 people every 10 minutes. Leavers only come
-                // from the last 5 rows of the leaderboard. (dt clamped so a frozen
-                // tab restoring never bursts multiple population ticks at once.)
-                updatePopulation(Math.min(dt, 1.0));
+                // Population shifts on MINUTE cadence - HOST ONLY (the host owns the
+                // server roster; clients see joins/leaves through botinfo updates).
+                // 1 person joins or leaves every 5 minutes, 2 people every 10
+                // minutes. Leavers only come from the last 5 rows of the leaderboard.
+                // (dt clamped so a frozen tab restoring never bursts multiple
+                // population ticks at once.)
+                if (!netClientMode()) updatePopulation(Math.min(dt, 1.0));
                 // Heal buttons: green tops heal + go red on touch, recover after 10s
                 updateHealButtons(Math.min(dt, 1.0));
-                // Static test Dummy (reach validation) simulates alongside the bots
-                updateDummy(Math.min(dt, 0.1));
             }
 
             // Day/night lighting blend + sword hitbox outline visibility run every
@@ -9899,16 +10959,23 @@ ONLY deltaexploits.gg IS REAL!`;
         // the server at a time; otherwise a fully random bot joins.
         function addServerBot() {
             if (npcs.length >= currentMaxBots()) return null;
+            let spawned = null;
             for (const key of Object.keys(SPECIAL_BOTS)) {
                 if (!specialBotInServer(key) && Math.random() < 0.15) {
                     const p = randomSpawnPadPos(PLATFORM_TOP_Y + 1 + 5.625);
                     spawnNPC(p, key);
-                    return npcs[npcs.length - 1];
+                    spawned = npcs[npcs.length - 1];
+                    break;
                 }
             }
-            const p = randomSpawnPadPos(PLATFORM_TOP_Y + 1 + 5.625);
-            spawnNPC(p);
-            return npcs[npcs.length - 1];
+            if (!spawned) {
+                const p = randomSpawnPadPos(PLATFORM_TOP_Y + 1 + 5.625);
+                spawnNPC(p);
+                spawned = npcs[npcs.length - 1];
+            }
+            // Clients mirror the host's roster - tell them a new member joined
+            if (hostHasClients()) sendBotInfo();
+            return spawned;
         }
 
         // Removes a specific bot from the server (a player leaving the game).
@@ -9922,9 +10989,14 @@ ONLY deltaexploits.gg IS REAL!`;
             releaseBotName(n.name);
             deleteSwordStatesForBot(n.id);
             spectateOnMembersChanged();               // watching them? -> cycle to the next
+            // Clients mirror the host's roster - tell them this member left
+            if (hostHasClients()) sendBotInfo();
         }
 
         function updateGameUI() {
+            // Host-authoritative bots: a CLIENT never reconciles the bot count -
+            // its bots only ever come from the host's botinfo roster.
+            if (netClientMode()) return;
             // Server capacity: 20 people max (players + bots). Every human player
             // takes a slot; the bot count can never exceed whatever room is left.
             // When a multiplayer player joins, the cap drops and a bot is removed
@@ -10017,7 +11089,11 @@ ONLY deltaexploits.gg IS REAL!`;
                         const dx = n.pos.x - b.cx, dz = n.pos.z - b.cz;
                         const feet = n.pos.y - 5.5;
                         if (dx * dx + dz * dz < R && feet > b.topY - 2.5 && feet < b.topY + 4.5) {
-                            if (n.health < 100) { n.health = 100; updateNPCHealthBar(n); }
+                            // Host-authoritative bots: only the host writes bot
+                            // health; clients still show the touch cooldown visual
+                            // (the mirrored bot is at the same spot) and the next
+                            // snapshot confirms the heal.
+                            if (!netClientMode() && n.health < 100) { n.health = 100; updateNPCHealthBar(n); }
                             touched = true;
                             break;
                         }
@@ -10074,7 +11150,7 @@ ONLY deltaexploits.gg IS REAL!`;
         // Everyone in the server except the local player: all bots + remote players.
         function spectateMembers() {
             const list = [];
-            npcs.forEach(n => list.push({ kind: 'npc', ref: n, name: n.name }));
+            npcs.forEach(n => list.push({ kind: 'npc', ref: n, name: n.displayName || n.name }));
             remotePlayers.forEach(rp => list.push({ kind: 'remote', ref: rp, name: rp.name }));
             return list;
         }
@@ -10162,41 +11238,58 @@ ONLY deltaexploits.gg IS REAL!`;
         }
 
         // ----- HITBOX VISUALIZATION -----
-        // Every sword (player + bots) gets a red-outlined rectangular prism sized to
-        // the NORMAL sword hit volume (capsule bounding box: 4 wide x 4 deep x 8
-        // along the blade) parented to the sword so it follows every swing.
-        // DivineFlame / Astralium render the NORMAL box too - their real 5x5x5
-        // sphere hitbox is deliberately not drawn.
+        // Every sword (player + bots) gets a red wireframe BOX: the rectangular
+        // prism that bounds the real hit volume (the SWORD_HIT_RADIUS sphere
+        // swept along the blade line, hilt -0.5 -> tip 3.5). That makes it
+        // 4 wide x 8 long x 4 deep (blade sweep 4 + a sphere diameter on each
+        // axis), centered on the blade midpoint y=1.5 so it spans y -2.5..5.5.
+        // DivineFlame / Astralium render the NORMAL box too - their real
+        // 8x8x8 sphere hitbox is deliberately not drawn.
 
         // ===================== REACH SCRIPT (game core) =====================
-        // One shared reach state driven by BOTH the loadstring GUI
-        // (pastebin 0dnNLQgG) and the IY commands (reach / boxreach).
+        // One shared reach state driven by the loadstring GUIs
+        // (pastebin 0dnNLQgG = Reach GUI, pastebin 0dnNLBuK = REACH V3 GUI)
+        // and the IY commands (reach / boxreach).
         // Line: the sword capsule stretched past the blade tip by `value` studs.
         // Sphere / Box: a value x value x value stud region centered on the blade
         // midpoint (reach 10 = a 10x10x10 stud sphere or box).
+        // vizTransparency: 0 = solid, 1 = invisible (default 0.75 = 75% transparent).
+        // vizColor: Red/Blue/White/Green/Yellow/Purple/Orange/Rainbow (default Red);
+        // Rainbow smoothly cycles the hue every frame.
         const reachState = {
             active: false,        // is the extended hitbox enabled
-            value: 3.5,           // reach in studs
+            value: 3.5,           // reach in studs (NO upper cap - as high as possible)
             shape: 'Line',        // 'Line' | 'Sphere' | 'Box'
             damage: true,         // does the EXTENDED hitbox deal damage
-            visualizer: false     // show the 3D hitbox
+            visualizer: false,    // show the 3D hitbox
+            vizTransparency: 0.75,// visualizer transparency (0-1)
+            vizColor: 'Red'       // visualizer color name ('Rainbow' = hue cycle)
         };
         let reachVizMesh = null;
+        const REACH_VIZ_COLORS = {
+            Red: 0xff2222, Blue: 0x2266ff, White: 0xffffff, Green: 0x22dd44,
+            Yellow: 0xffdd22, Purple: 0x9944ff, Orange: 0xff8822
+        };
         const _rHilt = new THREE.Vector3(), _rTip = new THREE.Vector3(), _rExt = new THREE.Vector3(), _rCenter = new THREE.Vector3(),
               _rTarget = new THREE.Vector3(), _rLine = new THREE.Vector3(), _rPoint = new THREE.Vector3(), _rClosest = new THREE.Vector3(), _rLocal = new THREE.Vector3();
 
-        // Shared setter used by the GUI and the IY commands. Keeps the GUI in sync.
+        // Shared setter used by the GUIs and the IY commands. Keeps the GUIs in sync.
         function setReachOptions(opts) {
             if (typeof opts.value === 'number' && isFinite(opts.value)) {
-                reachState.value = Math.min(100, Math.max(0, opts.value));
+                reachState.value = Math.max(0, opts.value);   // no upper cap anymore
             }
             if (opts.shape === 'Line' || opts.shape === 'Sphere' || opts.shape === 'Box') reachState.shape = opts.shape;
             if (typeof opts.damage === 'boolean') reachState.damage = opts.damage;
             if (typeof opts.visualizer === 'boolean') reachState.visualizer = opts.visualizer;
+            if (typeof opts.vizTransparency === 'number' && isFinite(opts.vizTransparency)) {
+                reachState.vizTransparency = Math.min(1, Math.max(0, opts.vizTransparency));
+            }
+            if (typeof opts.vizColor === 'string' && (REACH_VIZ_COLORS[opts.vizColor] || opts.vizColor === 'Rainbow')) reachState.vizColor = opts.vizColor;
             if (typeof opts.active === 'boolean') reachState.active = opts.active;
             else if (typeof opts.value === 'number') reachState.active = reachState.value > 0;
             if (reachState.active) rebuildReachViz();
             if (window.updateReachGUI) window.updateReachGUI();
+            if (window.updateReachV3GUI) window.updateReachV3GUI();
         }
 
         // Distance from the target torso to the NORMAL sword capsule (hilt -> tip).
@@ -10266,14 +11359,17 @@ ONLY deltaexploits.gg IS REAL!`;
             }
         }
 
-        // --- Visualizer: a FILLED transparent red 3D shape (~50% opacity) parented
-        // to the sword so it sweeps with every swing. Rebuilt on shape/value change.
+        // --- Visualizer: a FILLED transparent 3D shape parented to the sword so it
+        // sweeps with every swing. Rebuilt on shape/value change. Opacity follows
+        // reachState.vizTransparency (default 0.75 = 75% transparent) and the color
+        // follows reachState.vizColor (Rainbow cycles in updateReachViz).
         function rebuildReachViz() {
             if (reachVizMesh && reachVizMesh.parent) reachVizMesh.parent.remove(reachVizMesh);
             reachVizMesh = null;
             if (!swordModel) return;
             const v = Math.max(0.1, reachState.value);
-            const mat = new THREE.MeshBasicMaterial({ color: 0xff2222, transparent: true, opacity: 0.5, depthTest: false, side: THREE.DoubleSide });
+            const colHex = REACH_VIZ_COLORS[reachState.vizColor] || 0xff2222;
+            const mat = new THREE.MeshBasicMaterial({ color: colHex, transparent: true, opacity: 1 - reachState.vizTransparency, depthTest: false, side: THREE.DoubleSide });
             let geo;
             if (reachState.shape === 'Line') {
                 geo = new THREE.CylinderGeometry(SWORD_HIT_RADIUS, SWORD_HIT_RADIUS, v, 18, 1, false);
@@ -10292,36 +11388,72 @@ ONLY deltaexploits.gg IS REAL!`;
             reachVizMesh = mesh;
         }
 
+        // Is the camera INSIDE the visualizer volume right now? (sword-local space)
+        function cameraInsideReachViz() {
+            if (!reachVizMesh || !camera) return false;
+            const v = Math.max(0.1, reachState.value);
+            _rLocal.copy(camera.position);
+            swordModel.worldToLocal(_rLocal);
+            if (reachState.shape === 'Line') {
+                const yMin = 3.5, yMax = 3.5 + v;
+                return _rLocal.y >= yMin - SWORD_HIT_RADIUS && _rLocal.y <= yMax + SWORD_HIT_RADIUS &&
+                    (_rLocal.x * _rLocal.x + _rLocal.z * _rLocal.z) <= SWORD_HIT_RADIUS * SWORD_HIT_RADIUS;
+            }
+            if (reachState.shape === 'Sphere') {
+                const dx = _rLocal.x, dy = _rLocal.y - 1.5, dz = _rLocal.z;
+                return (dx * dx + dy * dy + dz * dz) <= (v / 2) * (v / 2);
+            }
+            return Math.abs(_rLocal.x) <= v / 2 && Math.abs(_rLocal.y - 1.5) <= v / 2 && Math.abs(_rLocal.z) <= v / 2;
+        }
+
         // Per-frame visualizer upkeep (called from updateHitboxViz): visibility +
-        // self-healing re-attach if the character (and sword model) got rebuilt.
+        // self-healing re-attach + Rainbow hue cycling + hide when the camera is
+        // viewing from inside the shape.
         function updateReachViz() {
             if (reachVizMesh && reachVizMesh.parent !== swordModel) {
                 if (reachVizMesh.parent) reachVizMesh.parent.remove(reachVizMesh);
                 reachVizMesh = null;
             }
             if (!reachVizMesh && reachState.visualizer && reachState.active) rebuildReachViz();
-            if (reachVizMesh) reachVizMesh.visible = !!(reachState.visualizer && reachState.active && swordModel && swordModel.visible);
+            if (reachVizMesh) {
+                const show = !!(reachState.visualizer && reachState.active && swordModel && swordModel.visible);
+                // Invisible while the camera is inside the shape (it would fill
+                // the whole screen) - reappears the moment the camera leaves.
+                reachVizMesh.visible = show && !cameraInsideReachViz();
+                if (reachVizMesh.visible && reachState.vizColor === 'Rainbow') {
+                    const hue = (performance.now() * 0.00025) % 1;   // full cycle ~4s
+                    reachVizMesh.material.color.setHSL(hue, 1, 0.5);
+                }
+            }
         }
 
         // ===================== GOTO / TGOTO TARGET RESOLVER =====================
         // Matches a player/bot name for the IY goto + tgoto commands. Trailing
-        // slashes are tolerated ("goto dummy/" == "goto dummy"); exact name match
-        // first, then prefix match. Bots, remote players and the Dummy all resolve.
+        // slashes are tolerated ("goto DivineFlame/" == "goto DivineFlame"); exact
+        // match first (name, displayName or username), then prefix match.
         function resolveGotoTarget(nameRaw) {
             let name = String(nameRaw || '').trim();
             while (name.endsWith('/')) name = name.slice(0, -1);
             if (!name) return null;
             const lower = name.toLowerCase();
-            if (dummyNPC && lower === 'dummy') return { kind: 'dummy', ref: dummyNPC };
-            for (let i = 0; i < npcs.length; i++) { if (npcs[i].name.toLowerCase() === lower) return { kind: 'npc', ref: npcs[i] }; }
-            let exact = null;
-            remotePlayers.forEach(rp => {
-                if (exact) return;
-                if (rp.name.toLowerCase() === lower || (rp.username || '').toLowerCase() === lower) exact = { kind: 'remote', ref: rp };
+            let hit = null;
+            for (let i = 0; i < npcs.length; i++) {
+                const n = npcs[i];
+                const nm = (n.displayName || n.name || '').toLowerCase();
+                const un = (n.username || '').toLowerCase();
+                if (nm === lower || un === lower) { hit = { kind: 'npc', ref: n }; break; }
+            }
+            if (!hit) remotePlayers.forEach(rp => {
+                if (hit) return;
+                if (rp.name.toLowerCase() === lower || (rp.username || '').toLowerCase() === lower) hit = { kind: 'remote', ref: rp };
             });
-            if (exact) return exact;
-            if (dummyNPC && 'dummy'.startsWith(lower)) return { kind: 'dummy', ref: dummyNPC };
-            for (let i = 0; i < npcs.length; i++) { if (npcs[i].name.toLowerCase().startsWith(lower)) return { kind: 'npc', ref: npcs[i] }; }
+            if (hit) return hit;
+            for (let i = 0; i < npcs.length; i++) {
+                const n = npcs[i];
+                const nm = (n.displayName || n.name || '').toLowerCase();
+                const un = (n.username || '').toLowerCase();
+                if (nm.startsWith(lower) || un.startsWith(lower)) return { kind: 'npc', ref: n };
+            }
             let partial = null;
             remotePlayers.forEach(rp => {
                 if (partial) return;
@@ -10332,119 +11464,18 @@ ONLY deltaexploits.gg IS REAL!`;
         // Feet-space world position of a goto target (same convention as
         // npcTargetPosition) written into `out`.
         function gotoTargetFeet(t, out) {
-            if (t.kind === 'dummy') return out.set(t.ref.pos.x, t.ref.pos.y - 5.5, t.ref.pos.z);
             return npcTargetPosition(t, out);
-        }
-
-        // ===================== STATIC TEST DUMMY =====================
-        // A still, light-gray bot named "Dummy" for validating sword damage and the
-        // reach script. He never moves and never fights, has no forcefield, takes
-        // damage from any sword and respawns 5 seconds after dying, standing at his
-        // home spot again.
-        let dummyNPC = null;
-
-        function spawnDummy() {
-            // Stand ~12 studs in from the player's spawn pad, facing the spawn.
-            const home = new THREE.Vector3(playerPos.x, 0, playerPos.z);
-            const inward = Math.abs(playerPos.x) > 10 ? -Math.sign(playerPos.x) * 12 : 12;
-            home.x = THREE.MathUtils.clamp(playerPos.x + inward, -PLATFORM_SIZE.w / 2 + 8, PLATFORM_SIZE.w / 2 - 8);
-            home.y = PLATFORM_TOP_Y + 5.5;
-            const g = new THREE.Group();
-            const GRAY = 0xcccccc;                                     // light gray, every part
-            const hM = new THREE.MeshStandardMaterial({ color: GRAY, roughness: 0.6 });
-            const tM = new THREE.MeshStandardMaterial({ color: GRAY, roughness: 0.6 });
-            const h = new THREE.Mesh(makeBeveledCylinder(0.6, 1.2, 0.3, 32, 8), hM);
-            h.position.y = 4.5; h.castShadow = true; h.receiveShadow = true; g.add(h);
-            const l = new THREE.TextureLoader(); l.crossOrigin = "Anonymous";
-            const fT = l.load(FACE_IMAGE_URL, t => { t.wrapS = THREE.RepeatWrapping; t.wrapT = THREE.RepeatWrapping; t.repeat.set(1.2, 1); t.offset.x = -0.1; t.needsUpdate = true; });
-            fT.colorSpace = THREE.SRGBColorSpace; fT.anisotropy = renderer.capabilities.getMaxAnisotropy();
-            const fM = new THREE.MeshBasicMaterial({ map: fT, transparent: true, depthWrite: false, side: THREE.DoubleSide });
-            const f = new THREE.Mesh(createFaceOverlayGeometry(0.6, 1.2, 0.3, 32, 10), fM);
-            h.add(f);
-            const t = new THREE.Mesh(createChamferBoxGeometry(2, 2, 1, 0.04), tM); t.position.y = 3; t.castShadow = true; t.receiveShadow = true; g.add(t);
-            const lG = createChamferBoxGeometry(1, 2, 1, 0.04); lG.translate(0, -1, 0);
-            const al = (x, y, m, ps = 0) => { const p = new THREE.Group(); p.position.set(x, y - ps, 0); const me = new THREE.Mesh(lG, m); me.position.y = ps; me.castShadow = true; me.receiveShadow = true; p.add(me); g.add(p); return { pivot: p, mesh: me }; };
-            const la = al(1.5, 4, hM, 0.5), ra = al(-1.5, 4, hM, 0.5), ll = al(0.5, 2, tM), rl = al(-0.5, 2, tM);
-            const ns2 = createNPCTextSprite('Dummy'); ns2.position.y = 6; g.add(ns2);
-            const hs = createNPCHealthSprite(); hs.position.y = 5.2; g.add(hs);
-            g.position.set(home.x, home.y - 5.5, home.z);
-            g.rotation.y = Math.atan2(playerPos.x - home.x, playerPos.z - home.z);
-            scene.add(g);
-            dummyNPC = {
-                id: 999999, isDummy: true,
-                name: 'Dummy',
-                group: g, head: h, torso: t, leftArm: la.pivot, rightArm: ra.pivot, leftLeg: ll.pivot, rightLeg: rl.pivot,
-                leftArmMesh: la.mesh, rightArmMesh: ra.mesh, leftLegMesh: ll.mesh, rightLegMesh: rl.mesh,
-                nameSprite: ns2, healthSprite: hs,
-                homePos: home.clone(),
-                pos: home.clone(), vel: new THREE.Vector3(), horizontalVel: new THREE.Vector3(),
-                isDead: false, health: 100,
-                debris: [], respawnTimer: 0, debrisTimer: 0
-            };
-        }
-
-        function triggerDummyDeath() {
-            const d = dummyNPC; if (!d || d.isDead) return;
-            d.isDead = true;
-            playOofSound();
-            ragdollNPC(d);
-            d.respawnTimer = 5.0;
-            d.debrisTimer = 3.0;
-            playerSwordStates.delete('npc:dummy');
-            playerSwordStates.delete('reachdummy');
-        }
-
-        function respawnDummy() {
-            const d = dummyNPC; if (!d) return;
-            d.debris.forEach(item => scene.remove(item.mesh)); d.debris = [];
-            d.pos.copy(d.homePos);
-            d.vel.set(0, 0, 0); d.horizontalVel.set(0, 0, 0);
-            d.health = 100; d.isDead = false;
-            d.group.visible = true;
-            d.group.position.set(d.pos.x, d.pos.y - 5.5, d.pos.z);
-            d.leftLeg.rotation.set(0, 0, 0); d.rightLeg.rotation.set(0, 0, 0);
-            d.leftArm.rotation.set(0, 0, 0); d.rightArm.rotation.set(0, 0, 0);
-            d.torso.rotation.set(0, 0, 0); d.head.rotation.set(0, 0, 0);
-            playerSwordStates.delete('npc:dummy');
-            playerSwordStates.delete('reachdummy');
-        }
-
-        function updateDummy(dt) {
-            const d = dummyNPC; if (!d) return;
-            const dc = d.group.position.distanceTo(camera.position);
-            d.nameSprite.material.opacity = THREE.MathUtils.clamp(1 - (dc / 100), 0, 1);
-            if (d.healthSprite.visible) d.healthSprite.material.opacity = d.nameSprite.material.opacity;
-            if (!showPlayerNames) d.nameSprite.material.opacity = 0;
-            if (d.isDead) {
-                if (d.debris.length > 0) {
-                    d.debrisTimer -= dt;
-                    if (d.debrisTimer <= 0) { d.debris.forEach(x => scene.remove(x.mesh)); d.debris = []; }
-                    else simulateDebrisSet(d.debris, dt);
-                }
-                d.respawnTimer -= dt;
-                if (d.respawnTimer <= 0) respawnDummy();
-                return;
-            }
-            if (d.pos.y < KILL_PLANE_Y) { respawnDummy(); return; }
-            // Static: gravity + floor settle only - he never walks anywhere.
-            d.vel.y -= 100 * dt;
-            d.pos.addScaledVector(d.vel, dt);
-            debrisRay.set(new THREE.Vector3(d.pos.x, d.pos.y - 2, d.pos.z), new THREE.Vector3(0, -1, 0));
-            debrisRay.far = 1000;
-            const hits = debrisRay.intersectObjects(collisionObjs);
-            if (hits.length > 0) {
-                const groundY = hits[0].point.y;
-                if (d.pos.y - 5.5 <= groundY) { d.pos.y = groundY + 5.5; d.vel.set(0, 0, 0); }
-            }
-            d.group.position.set(d.pos.x, d.pos.y - 5.5, d.pos.z);
         }
 
         function ensureHitboxViz(sword) {
             if (!sword || sword.userData.hitboxViz) return;
-            const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(4, 8, 4));
+            const R = SWORD_HIT_RADIUS;
+            const w = R * 2;                                   // width/depth: sphere diameter
+            const len = 4 + R * 2;                             // blade sweep 4 + 2 sphere radii
+            const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, len, w));
             const mat = new THREE.LineBasicMaterial({ color: 0xff2020, depthTest: false, transparent: true, opacity: 0.95 });
             const lines = new THREE.LineSegments(geo, mat);
-            lines.position.set(0, 1.5, 0);          // blade midpoint (hilt -0.5 -> tip 3.5)
+            lines.position.y = 1.5;                            // blade midpoint (-0.5 + 3.5) / 2
             lines.renderOrder = 998;
             lines.visible = false;
             sword.add(lines);
@@ -10561,22 +11592,28 @@ ONLY deltaexploits.gg IS REAL!`;
         // body part colors, random lunge mode (Linear/Focus) and random skill level
         // 1-16. Bots fight the PLAYER and EACH OTHER, always attacking whoever is
         // closest to them.
-        function spawnNPC(pos, special) {
+        function spawnNPC(pos, special, identity) {
             // Random identity: name, classic Roblox-style part colors, per-bot lunge
             // mode (Linear/Focus) and skill level from the shuffled 1-16 pool, trait
             // (Aggressive 70% / Neutral 15% / Peaceful 15%), chat ability (50%),
             // chat personality (Fair/Toxic) and chat color from the player palette.
             // SPECIAL: passing 'DivineFlame' or 'Astralium' spawns that named champion
-            // with its fixed colors, level 16, its lunge mode and the big 5x5x5-stud
-            // sword hitbox.
+            // with its fixed colors, level 16, its lunge mode, the big 8x8x8-stud
+            // sphere sword hitbox, its fixed chat color/personality and its display
+            // name + username identity (normal bots use their rolled name for both).
+            // IDENTITY (multiplayer): a host's botinfo payload reproduces a bot
+            // EXACTLY on a client - same id, name, colors, level, mode, trait and
+            // stats - so every player in the game sees the same server members.
             const spec = special ? SPECIAL_BOTS[special] : null;
-            const name = spec ? spec.name : generateBotName();
-            const skinC = spec ? spec.colors.head : pickBotColor();   // head + arms (classic Roblox skin grouping)
-            const torsoC = spec ? spec.colors.torso : pickBotColor();
-            const armsC = spec ? spec.colors.arms : skinC;
-            const legsC = spec ? spec.colors.legs : pickBotColor();
-            const trait = spec ? 'Aggressive' : rollBotTrait();       // champions always fight
-            const chat = spec ? { canChat: true, chatTrait: 'Fair' } : rollBotChat(trait);
+            const ident = identity || null;
+            const name = ident ? ident.name : (spec ? spec.name : generateBotName());
+            const skinC = ident ? ident.colors.head : (spec ? spec.colors.head : pickBotColor());   // head + arms (classic Roblox skin grouping)
+            const torsoC = ident ? ident.colors.torso : (spec ? spec.colors.torso : pickBotColor());
+            const armsC = ident ? ident.colors.arms : (spec ? spec.colors.arms : skinC);
+            const legsC = ident ? ident.colors.legs : (spec ? spec.colors.legs : pickBotColor());
+            const trait = ident ? ident.trait : (spec ? 'Aggressive' : rollBotTrait());       // champions always fight
+            const chat = ident ? { canChat: !!ident.canChat, chatTrait: ident.chatTrait, chatStyle: ident.chatStyle }
+                : (spec ? { canChat: true, chatTrait: spec.chatTrait, chatStyle: spec.chatStyle } : rollBotChat(trait));
             const g = new THREE.Group();
             const hM = new THREE.MeshStandardMaterial({ color: skinC, roughness: 0.6 });
             const aM = new THREE.MeshStandardMaterial({ color: armsC, roughness: 0.6 });
@@ -10604,12 +11641,14 @@ ONLY deltaexploits.gg IS REAL!`;
             const hs = createNPCHealthSprite(); hs.position.y = 5.2; g.add(hs);
             g.position.copy(pos); scene.add(g);
             npcs.push({
-                id: ++npcIdCounter, swingId: 0,
-                name: name, level: spec ? spec.level : rollBotLevel(), mode: spec ? spec.mode : (Math.random() < 0.5 ? 'Linear' : 'Focus'),
-                special: special || null, bigHitbox: !!(spec && spec.bigHitbox),
+                id: ident ? ident.id : ++npcIdCounter, swingId: 0,
+                name: name, displayName: name, username: ident ? ident.username : (spec ? spec.username : name),
+                level: ident ? ident.level : (spec ? spec.level : rollBotLevel()),
+                mode: ident ? ident.mode : (spec ? spec.mode : (Math.random() < 0.5 ? 'Linear' : 'Focus')),
+                special: ident ? (ident.special || null) : (special || null), bigHitbox: ident ? !!ident.bigHitbox : !!(spec && spec.bigHitbox),
                 colors: { head: skinC, torso: torsoC, arms: armsC, legs: legsC },
-                trait: trait, canChat: chat.canChat, chatTrait: chat.chatTrait, chatColor: rollBotChatColor(),
-                kills: 0, deaths: 0, killstreak: 0,
+                trait: trait, canChat: chat.canChat, chatTrait: chat.chatTrait, chatStyle: chat.chatStyle || null, chatColor: ident ? ident.chatColor : (spec ? spec.chatColor : rollBotChatColor()),
+                kills: ident ? (ident.kills || 0) : 0, deaths: ident ? (ident.deaths || 0) : 0, killstreak: ident ? (ident.killstreak || 0) : 0,
                 group: g, head: h, torso: t, leftArm: la.pivot, rightArm: ra.pivot, leftLeg: ll.pivot, rightLeg: rl.pivot,
                 leftArmMesh: la.mesh, rightArmMesh: ra.mesh, leftLegMesh: ll.mesh, rightLegMesh: rl.mesh,
                 sword: ns, forcefield: nff, nameSprite: ns2, healthSprite: hs,
@@ -10623,7 +11662,11 @@ ONLY deltaexploits.gg IS REAL!`;
                 allyPlayer: false, allyJumpCd: 0, wanderTarget: new THREE.Vector3(pos.x, pos.y, pos.z),
                 wanderTimer: 1 + Math.random() * 3, wanderMoving: false,
                 threatHeat: 0, engageRef: null, lastAttacker: null, tbag: null, bubbles: [],
-                forcedAttacker: false, defendTime: 0
+                forcedAttacker: false, defendTime: 0, voidDeath: false,
+                // Multiplayer mirror fields (client mode): the host's latest snapshot
+                // target, the previous one (for velocity), and the swing id last seen.
+                netTP: new THREE.Vector3(pos.x, pos.y, pos.z), netPrevTP: new THREE.Vector3(pos.x, pos.y, pos.z),
+                netMoveVel: new THREE.Vector3(), netVelY: 0, netTPTime: 0, lastNetSwingId: 0
             });
         }
 
@@ -10632,6 +11675,7 @@ ONLY deltaexploits.gg IS REAL!`;
         function triggerNPCVoidDeath(n) {
             if (n.isDead) return;
             n.isDead = true;
+            n.voidDeath = true;                    // mirrored clients skip the ragdoll
             playOofSound();
             n.group.visible = false;            // disappears into the void
             n.debris = [];
@@ -10715,7 +11759,7 @@ ONLY deltaexploits.gg IS REAL!`;
             n.pos.copy(pad);
             n.group.position.set(pad.x, pad.y - 5.5, pad.z);
             n.vel.set(0, 0, 0); n.horizontalVel.set(0, 0, 0);
-            n.health = 100; n.isDead = false; n.group.visible = true;
+            n.health = 100; n.isDead = false; n.voidDeath = false; n.group.visible = true;
             n.state = 'FOLLOW'; n.stateTimer = 0; n.attackTimer = 0; n.retreatTimer = 0;
             n.strafeDir = Math.random() > 0.5 ? 1 : -1; n.lungeTimer = 0;
             n.leftLeg.rotation.set(0,0,0); n.rightLeg.rotation.set(0,0,0);
@@ -10819,6 +11863,11 @@ ONLY deltaexploits.gg IS REAL!`;
             const t = n.target;
             if (!t || t.kind !== 'npc' || !t.ref) return false;
             const m = t.ref;
+            // A Peaceful bot only ever targets a bot in self-defense (the cornered
+            // fight-back mode) - it ALWAYS takes the defense role so the full
+            // read-and-counter machinery drives it, even if the attacker has
+            // already switched its attention to someone else.
+            if (n.trait === 'Peaceful') return true;
             if (m.isDead || !m.target || m.target.kind !== 'npc' || m.target.ref !== n) return false;
             if (n.forcedAttacker) return false;   // escalated Neutral: full attack AI now
             const nAgg = botIsFighting(n), mAgg = botIsFighting(m);
@@ -10837,8 +11886,13 @@ ONLY deltaexploits.gg IS REAL!`;
         function addBotChat(n, text) {
             const messages = document.getElementById('chat-messages');
             if (!messages) return;
+            // Host-authoritative bots: only the host rolls bot chat lines; clients
+            // receive them as 'botchat' messages so everyone reads the same line.
+            if (isHost && netJoined && netConns.length > 0) {
+                try { broadcast({ t: 'botchat', id: n.id, msg: text }); } catch (e) {}
+            }
             const div = document.createElement('div');
-            const safeName = String(n.name).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
+            const safeName = String(n.displayName || n.name).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
             const safeMsg = String(text).replace(/[<>&"]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c]));
             div.innerHTML = '<span class="chat-msg-user" style="color: ' + n.chatColor + ';">[' + safeName + ']:</span> ' + safeMsg;
             messages.appendChild(div);
@@ -10857,9 +11911,12 @@ ONLY deltaexploits.gg IS REAL!`;
         function botKillChat(killer) {
             if (!killer || !killer.canChat || Math.random() >= 0.30) return;
             let pool;
-            const eff = effBotTrait(killer);
-            if (eff === 'Aggressive') pool = (killer.chatTrait === 'Toxic') ? BOT_CHAT_TOXIC : BOT_CHAT_FAIR;
-            else pool = BOT_CHAT_PASSIVE;
+            if (killer.chatStyle === 'polite') pool = BOT_CHAT_POLITE;      // DivineFlame's polite texting
+            else {
+                const eff = effBotTrait(killer);
+                if (eff === 'Aggressive') pool = (killer.chatTrait === 'Toxic') ? BOT_CHAT_TOXIC : BOT_CHAT_FAIR;
+                else pool = BOT_CHAT_PASSIVE;
+            }
             addBotChat(killer, pool[Math.floor(Math.random() * pool.length)]);
         }
 
@@ -10883,6 +11940,12 @@ ONLY deltaexploits.gg IS REAL!`;
                 victim: victim, timer: 6.0, phase: Math.random() * Math.PI * 2,
                 hp0: killer.health, axis: Math.random() < 0.5 ? 'x' : 'z', pos: headPos
             };
+            // Share the celebration with clients: they replay the slide locally
+            // over their own copy of the victim's ragdoll.
+            if (isHost && netJoined && netConns.length > 0) {
+                const victimId = (victim === 'player') ? 'player' : victim.id;
+                try { broadcast({ t: 'bottbag', id: killer.id, victim: victimId }); } catch (e) {}
+            }
         }
 
         // Runs the tbag movement; returns true while the tbag is still going.
@@ -10976,10 +12039,11 @@ ONLY deltaexploits.gg IS REAL!`;
             let gx = n.pos.x + away.x * 10, gz = n.pos.z + away.z * 10;
             if (s) {
                 if (s.pole) {
-                    // ON a beam: flee ALONG the beam toward whichever end is away
-                    // from the threat (never sideways off the line).
-                    if (s.pole === 'z') { gx = 0; gz = (_npcV1.z < s.z0) ? s.z1 - 1 : s.z0 + 1; }
-                    else { gz = 0; gx = (_npcV1.x < s.x0) ? s.x1 - 1 : s.x0 + 1; }
+                    // ON a beam: flee ALONG the beam and PAST its end (2 studs clear
+                    // of the seam, onto the map or the platform) - never sideways
+                    // off the line, and never circling inside the beam itself.
+                    if (s.pole === 'z') { gx = 0; gz = (_npcV1.z < s.z0) ? s.z1 + 2 : s.z0 - 2; }
+                    else { gz = 0; gx = (_npcV1.x < s.x0) ? s.x1 + 2 : s.x0 - 2; }
                 } else {
                     const m = 2.0;
                     gx = Math.max(s.x0 + m, Math.min(s.x1 - m, gx));
@@ -11131,8 +12195,30 @@ ONLY deltaexploits.gg IS REAL!`;
             }
 
             if (eff === 'Peaceful') {
-                // Peaceful bots NEVER draw a sword and ALWAYS run away (slightly
-                // faster than attackers so they can actually escape).
+                // CORNERED SELF-DEFENSE: a Peaceful bot that was just damaged by a
+                // BOT stops running and fights back - sword out, reads the attacker's
+                // moves exactly like any defender (sidesteps fresh swings, punishes
+                // retreats, counters swing-ends). It never escalates into a full
+                // chase and sheathes the moment the beating stops for a few
+                // seconds. Being hunted by the PLAYER still sends it running.
+                const la = n.lastAttacker;
+                const cornered = la && la.target && la.target.kind === 'npc' &&
+                    performance.now() - la.time < 3500 &&
+                    npcTargetValid(la.target) && npcTargetDistance(n, la.target) < 24;
+                if (cornered) {
+                    const combat = la.target;
+                    n.sword.visible = true;
+                    n.threatHeat = 0;
+                    if (!n.target || n.target.kind !== combat.kind || n.target.ref !== combat.ref) {
+                        n.target = combat;
+                        n.engagedAt = performance.now();
+                        n.state = 'FOLLOW'; n.stateTimer = 0; n.attackTimer = 0; n.retreatTimer = 0;
+                        n.counterTimer = 0;
+                    }
+                    return;
+                }
+                // Peaceful bots otherwise NEVER draw a sword and ALWAYS run away
+                // (slightly faster than attackers so they can actually escape).
                 n.target = null;
                 n.engageRef = null;
                 n.sword.visible = false;
@@ -11170,7 +12256,7 @@ ONLY deltaexploits.gg IS REAL!`;
                     n.threatHeat = 0;
                     n.engageRef = threat;
                 } else {
-                    botFleeFrom(n, threat, dt, 16, true);       // back away first
+                    botFleeFrom(n, threat, dt, 19, true);       // back away first - at 19 it outruns the 16-speed chasers, so the 3-second hesitation is no longer free chip damage
                 }
             } else {
                 n.threatHeat = Math.max(0, n.threatHeat - dt * 2);
@@ -11179,46 +12265,76 @@ ONLY deltaexploits.gg IS REAL!`;
             }
         }
 
-        // The DEFENSE bot's moves are driven by the ATTACK bot's moves: it evades when
-        // the attacker swings or closes in, orbits at sword range, and counter-attacks
-        // in the window right after the attacker's swing ends. Counters are far more
-        // decisive than they used to be (chance and window scale strongly with level)
-        // so passive bots that DO defend themselves hold their own. A Neutral bot
-        // defending for more than a moment escalates to the full attack AI.
+        // The DEFENSE bot's moves are driven by the ATTACK bot's moves - it READS
+        // them every frame, exactly the way the attack AI reads the player:
+        //   * every fresh attacker swing (the swingId bump on each lunge) is
+        //     answered with a hard perpendicular sidestep,
+        //   * the attacker's current velocity tells closing vs retreating,
+        //   * the attacker's RETREAT state is its most vulnerable moment and is
+        //     PUNISHED with an immediate chase + counter-swing,
+        //   * a genuinely-ended swing sequence opens the classic counter window.
+        // The old version watched swordSwingTime for swing ENDS - but the attack
+        // loop re-arms the swing every 0.2s, so a swing never "ended" while the
+        // attacker was actually attacking; counters only fired once the attacker
+        // was already safe, and defenders just got chased down. Reading swings
+        // and states directly fixes that.
+        // A Neutral bot defending for a while (or taking real damage) still
+        // escalates to the full attack AI; Peaceful bots stay reactive forever.
         function npcDefenseLogic(n, dt, tp, tVel, dir, dist) {
             const atk = n.target.ref; // the attack bot
             // ESCALATION: a Neutral bot (sword out, self-defense) stops being purely
-            // reactive after a short defensive phase or once it takes real damage -
+            // reactive after a real defensive phase or once it takes heavy damage -
             // it fights back with the complete attack AI from then on.
             if (!n.forcedAttacker && n.trait !== 'Peaceful' && n.sword && n.sword.visible &&
-                (n.health < 75 || (n.defendTime || 0) > 1.5)) {
+                (n.health < 60 || (n.defendTime || 0) > 2.5)) {
                 n.forcedAttacker = true;
             }
             if (!n.forcedAttacker) n.defendTime = (n.defendTime || 0) + dt;
-            // Counter burst: chase the attacker's CURRENT position and swing
+            // Counter burst: chase the attacker's CURRENT position and swing when
+            // the blade can actually connect (no wasted air swings out of range).
             if (n.counterTimer > 0) {
                 n.counterTimer -= dt;
-                n.horizontalVel.copy(dir).multiplyScalar(17);
+                n.horizontalVel.copy(dir).multiplyScalar(19);      // outruns a retreating bot (16)
                 n.yaw = Math.atan2(dir.x, dir.z);
-                n.lungeTimer -= dt;
-                if (n.lungeTimer <= 0) {
-                    n.swordSwingType = 'double'; n.swordSwingDuration = 0.5; n.swordSwingTime = 0.5; n.swingId++;
-                    n.lungeTimer = 0.2;
-                    playNpcLungeSound();
+                if (dist < 6.5) {
+                    n.lungeTimer -= dt;
+                    if (n.lungeTimer <= 0) {
+                        n.swordSwingType = 'double'; n.swordSwingDuration = 0.5; n.swordSwingTime = 0.5; n.swingId++;
+                        n.lungeTimer = 0.25;
+                        playNpcLungeSound();
+                    }
                 }
                 return;
             }
             if (n.counterCooldown > 0) n.counterCooldown -= dt;
 
-            // Watch the attacker's sword: react the moment a swing ENDS (counter window)
+            // ---- READ THE ATTACKER'S MOVES ----
+            // 1) Fresh swing STARTED: the attacker bumps swingId on every lunge.
             const atkSwing = atk.swordSwingTime > 0;
+            const freshSwing = atk.swingId !== (n.lastAtkSwingId || 0);
+            n.lastAtkSwingId = atk.swingId;
+            // 2) Swing sequence genuinely ENDED: mid-attack the spam loop keeps
+            //    resetting the timer, so an end means the attack phase is over.
             const swingJustEnded = n.lastAtkSwing > 0 && !atkSwing;
             n.lastAtkSwing = atk.swordSwingTime;
-            if (swingJustEnded && n.counterCooldown <= 0 && dist < 11) {
-                const chance = 0.35 + n.level * 0.035;
+            // 3) Retreat read: the attacker's state machine IS readable - a
+            //    'RETREAT' (or strongly away-moving) attacker is mid-punish-window.
+            const atkRetreating = atk.state === 'RETREAT' ||
+                (tVel.lengthSq() > 1 && _npcV4.copy(tVel).normalize().dot(dir) < -0.45 && !atkSwing);
+
+            // PUNISH THE RETREAT: the attacker just finished its burst and is
+            // backing off - the single best moment to counter-attack.
+            if (atkRetreating && dist < 14 && n.counterCooldown <= 0) {
+                n.counterTimer = 0.55 + Math.random() * 0.35;
+                n.counterCooldown = Math.max(0.25, 1.0 - n.level * 0.05);
+                return;
+            }
+            // Classic counter window right after a swing sequence truly ends.
+            if (swingJustEnded && n.counterCooldown <= 0 && dist < 9) {
+                const chance = 0.45 + n.level * 0.033;
                 if (Math.random() < chance) {
-                    n.counterTimer = 0.5 + Math.random() * 0.3;
-                    n.counterCooldown = Math.max(0.35, 1.2 - n.level * 0.05);
+                    n.counterTimer = 0.55 + Math.random() * 0.35;
+                    n.counterCooldown = Math.max(0.25, 1.0 - n.level * 0.05);
                     return;
                 }
             }
@@ -11236,8 +12352,9 @@ ONLY deltaexploits.gg IS REAL!`;
             }
             const want = _npcV5.set(0, 0, 0);
             if (dist < 10) {
-                if (atkSwing || closing) want.addScaledVector(away, 1.0).addScaledVector(tangent, 0.9);   // dodge the swing
-                else want.addScaledVector(away, 0.5).addScaledVector(tangent, 0.5);                        // careful spacing
+                if (freshSwing && closing) want.addScaledVector(away, 0.9).addScaledVector(tangent, 1.35);   // sidestep the fresh lunge
+                else if (atkSwing || closing) want.addScaledVector(away, 0.8).addScaledVector(tangent, 1.1); // dodge at an angle, never straight back
+                else want.addScaledVector(away, 0.4).addScaledVector(tangent, 0.6);                          // careful spacing
             } else if (dist > 20) {
                 // Far pursuit: route through the connecting pole when the attacker
                 // is on another walkable surface (no beeline off the map edge).
@@ -11247,7 +12364,9 @@ ONLY deltaexploits.gg IS REAL!`;
                 if (wto.lengthSq() > 1) pdir = wto.normalize();
                 want.addScaledVector(pdir, retreating ? 0.55 : 0.3).addScaledVector(tangent, 0.35);         // slow, non-aggressive pursuit
             } else {
-                want.addScaledVector(tangent, 0.8).addScaledVector(away, 0.25);                            // orbit at sword range
+                // Attacker idles in MIRROR/FOLLOW: close to sword range so the
+                // next swing-end counter can actually reach them.
+                want.addScaledVector(dir, 0.45).addScaledVector(tangent, 0.6);
             }
             if (want.lengthSq() > 0) want.setLength(17);
             n.horizontalVel.lerp(want, 1 - Math.exp(-dt * 8));
@@ -11608,20 +12727,21 @@ ONLY deltaexploits.gg IS REAL!`;
             n.pos.x += n.horizontalVel.x * dt;
             n.pos.z += n.horizontalVel.z * dt;
 
-            // POLE-CROSSING GUARD: while a bot is over one of the pole lines, keep it
-            // locked to the beam centerline so normal movement can never drift
-            // sideways off the 1-stud line (hard shoves from other bodies can still
-            // knock a bot off - that fall is intentional). Everywhere else bots walk
-            // freely: walking off the map or platform edge means falling into the void.
+            // POLE-CROSSING GUARD: while a bot is over one of the pole lines (within
+            // the lateral tolerance), lock it to the beam centerline so normal
+            // movement can never drift sideways off the 1-stud line (hard shoves
+            // from other bodies can still knock a bot off - that fall is
+            // intentional). The lock is LATERAL ONLY: the old longitudinal clamp
+            // snapped bots back onto the beam at both end seams, trapping them
+            // between the pole area and the map/platform - now they walk off the
+            // end freely onto whichever surface is there.
             if (n.pos.y - 5.5 >= PLATFORM_TOP_Y - 0.5) {
                 const pole = surfaceAt(n.pos.x, n.pos.z, 0.75, -1);
                 if (pole && pole.pole) {
                     if (pole.pole === 'z') {
                         n.pos.x = THREE.MathUtils.clamp(n.pos.x, -0.4, 0.4);
-                        n.pos.z = THREE.MathUtils.clamp(n.pos.z, pole.z0 + 0.05, pole.z1 - 0.05);
                     } else {
                         n.pos.z = THREE.MathUtils.clamp(n.pos.z, -0.4, 0.4);
-                        n.pos.x = THREE.MathUtils.clamp(n.pos.x, pole.x0 + 0.05, pole.x1 - 0.05);
                     }
                 }
             }
@@ -11629,7 +12749,7 @@ ONLY deltaexploits.gg IS REAL!`;
             n.vel.y -= 196.2 * dt; n.pos.y += n.vel.y * dt;
             const nro = new THREE.Vector3(n.pos.x, n.pos.y - 2, n.pos.z); 
             floorRay.set(nro, new THREE.Vector3(0, -1, 0)); floorRay.far = 4.0; 
-            const fH = floorRay.intersectObjects(collisionObjs);
+            const fH = floorRay.intersectObjects(npcFloorObjs);
             if (fH.length > 0 && fH[0].distance < 4.0) { n.pos.y = fH[0].point.y + 5.5; n.vel.y = 0; n.isGrounded = true; } else n.isGrounded = false;
             
             if (!isRagdoll && !n.isDead) {
