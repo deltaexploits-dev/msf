@@ -2491,9 +2491,11 @@
             // --- REACH SCRIPT: extended hitbox vs remote players (multiplayer) ---
             // Damage travels through the same 'dmg' protocol as normal swings, so
             // other people in multiplayer take real damage from the extended hitbox.
+            // Players marked "Safe" in a Team check menu are excluded here.
             if (reachState.active && reachState.damage && netJoined && isHoldingSword && swordModel && swordModel.visible) {
                 remotePlayers.forEach(rp => {
                     if (rp.dead) return;
+                    if (isReachSafe(rp.name)) return;
                     const st = stateFor(playerSwordStates, 'reachrp:' + rp.id);
                     reachDamageCheck(swordModel, playerSwingId, st, rp.torso, false, now, () => {
                         const msg = { t: 'dmg', target: rp.id, dmg: swingDamage(swordSwingType) };
@@ -2504,9 +2506,11 @@
             }
 
             // --- REACH SCRIPT: extended hitbox vs NPC bots (host authoritative) ---
+            // Bots marked "Safe" in a Team check menu are excluded here.
             if (reachState.active && reachState.damage && botsLocal && isHoldingSword && swordModel && swordModel.visible) {
                 npcs.forEach(n => {
                     if (n.isDead || n.forcefieldActive) return;
+                    if (isReachSafe(n.displayName || n.name)) return;
                     const st = stateFor(playerSwordStates, 'reachnpc:' + n.id);
                     reachDamageCheck(swordModel, playerSwingId, st, n.torso, false, now, () => {
                         const dmg = swingDamage(swordSwingType);
@@ -2801,7 +2805,7 @@
                 });
 
                 window.addEventListener('keydown', (e) => { 
-                    if (document.activeElement && (document.activeElement.id === 'chat-input' || document.activeElement.id === 'iy-cmdbar' || document.activeElement.id === 'editor-textarea' || document.activeElement.id === 'rg-reach' || document.activeElement.id === 'cloud-search-input' || (document.activeElement.tagName === 'INPUT' && document.activeElement.closest && document.activeElement.closest('#rv3-root, #flygui, #script-menu')))) return; 
+                    if (document.activeElement && (document.activeElement.id === 'chat-input' || document.activeElement.id === 'iy-cmdbar' || document.activeElement.id === 'editor-textarea' || document.activeElement.id === 'rg-reach' || document.activeElement.id === 'cloud-search-input' || (document.activeElement.tagName === 'INPUT' && document.activeElement.closest && document.activeElement.closest('#rv3-root, #rv4-root, #ufling-gui, #flygui, #script-menu')))) return; 
                     if (isAvatarEditorOpen) return;
                     if (document.activeElement && (document.activeElement.id === 'pi-display-name' || document.activeElement.id === 'pi-username' || document.activeElement.id === 'avatar-name-input' || document.activeElement.id === 'custom-hex-input')) return;
                     // FIX (Shift rapid-toggle): keydown auto-repeats while a key is HELD,
@@ -2932,7 +2936,7 @@
                 // Sword swing / lunge (click / double-click)
                 window.addEventListener('mousedown', (e) => {
                     if (e.button === 0 && isHoldingSword && !isMenuOpen && !isAvatarEditorOpen && !isRagdoll && isRunning) {
-                        const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel');
+                        const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel');
                         if (!uiHit) handleSwordClick();
                     }
                 });
@@ -2941,7 +2945,7 @@
                 window.addEventListener('mousedown', (e) => {
                     if (e.button !== 0 || !isRunning || isMenuOpen || isAvatarEditorOpen || isRagdoll) return;
                     if (equippedSlot === -1 || !playerInventory[equippedSlot] || playerInventory[equippedSlot].id !== 'tptool') return;
-                    const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel');
+                    const uiHit = e.target.closest && e.target.closest('#inventory, #roblox-menu-btn, #top-bar-menu, #dropdown-menu, #leaderboard, #chat-container, #pause-menu, #avatar-editor-menu, #avatar-naming-modal, #invite-menu, #player-profile-overlay, .confirmation-panel, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel');
                     if (uiHit) return;
                     // While the pointer is locked (shift lock / first person) the cursor is
                     // frozen, so aim from the screen center instead of the stale clientX/Y.
@@ -2975,7 +2979,7 @@
                 document.addEventListener('touchstart', (e) => {
                     if (isMobile && currentInputMode === 'pc') {
                         const target = e.target;
-                        if (!target.closest('#pause-menu') && !target.closest('#avatar-editor-menu') && !target.closest('#avatar-naming-modal') && !target.closest('#roblox-menu-btn') && !target.closest('.confirmation-panel') && !target.closest('#shiftlock-toggle') && !target.closest('#top-bar-menu') && !target.closest('#dropdown-menu') && !target.closest('#leaderboard') && !target.closest('#inventory') && !target.closest('#chat-container') && !target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) {
+                        if (!target.closest('#pause-menu') && !target.closest('#avatar-editor-menu') && !target.closest('#avatar-naming-modal') && !target.closest('#roblox-menu-btn') && !target.closest('.confirmation-panel') && !target.closest('#shiftlock-toggle') && !target.closest('#top-bar-menu') && !target.closest('#dropdown-menu') && !target.closest('#leaderboard') && !target.closest('#inventory') && !target.closest('#chat-container') && !target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel')) {
                             switchToMobileControls();
                             return; 
                         }
@@ -2989,7 +2993,7 @@
 
                     for (let i = 0; i < e.changedTouches.length; i++) {
                         const t = e.changedTouches[i];
-                        if (t.target && t.target.closest && t.target.closest('#chat-container, #leaderboard, #inventory, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) continue;
+                        if (t.target && t.target.closest && t.target.closest('#chat-container, #leaderboard, #inventory, #exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel')) continue;
                         const isInsideJoystick = (currentMovementMode === 'classic' && t.clientX >= joyRect.left && t.clientX <= joyRect.right && t.clientY >= joyRect.top && t.clientY <= joyRect.bottom);
                         const isInsideDynamicZone = (currentMovementMode === 'dynamic' && t.clientX >= dZoneRect.left && t.clientX <= dZoneRect.right && t.clientY >= dZoneRect.top && t.clientY <= dZoneRect.bottom);
                         const isInsideJump = (t.clientX >= jumpRect.left && t.clientX <= jumpRect.right && t.clientY >= jumpRect.top && t.clientY <= jumpRect.bottom);
@@ -3055,7 +3059,7 @@
                 window.addEventListener('touchstart', (e) => {
                     if (currentMovementMode !== 'tap' || isMenuOpen || isRagdoll || !isRunning || isAvatarEditorOpen) return;
                     const target = e.target;
-                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#jump-button') || target.closest('#mobile-shiftlock') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) return;
+                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#jump-button') || target.closest('#mobile-shiftlock') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel')) return;
                     const touch = e.changedTouches[0];
                     const mouse = new THREE.Vector2((touch.clientX / window.innerWidth) * 2 - 1, -(touch.clientY / window.innerHeight) * 2 + 1);
                     const raycaster = new THREE.Raycaster();
@@ -3070,7 +3074,7 @@
                 window.addEventListener('mousedown', (e) => {
                     if (currentMovementMode !== 'tap' || isMenuOpen || isRagdoll || !isRunning || isAvatarEditorOpen || e.button !== 0) return;
                     const target = e.target;
-                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #script-menu, #script-menu-overlay, .content-panel')) return;
+                    if (target.closest('#roblox-menu-btn') || target.closest('#pause-menu') || target.closest('#avatar-editor-menu') || target.closest('#avatar-naming-modal') || target.closest('#top-bar-menu') || target.closest('#dropdown-menu') || target.closest('#leaderboard') || target.closest('#inventory') || target.closest('#chat-container') || target.closest('#exploit-overlay, #exploit-sidebar, #exploit-toggle, #iy-container, #iy-toggle, #reach-gui, #flygui, #rv3-root, #rv3-toggle, #rv3-teammenu, #rv4-root, #rv4-toggle, #rv4-teammenu, #ufling-gui, #script-menu, #script-menu-overlay, .content-panel')) return;
                     const mouse = new THREE.Vector2((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
                     const raycaster = new THREE.Raycaster();
                     raycaster.setFromCamera(mouse, camera);
@@ -4451,14 +4455,14 @@
 
         function processChatCommand(msg) {
             // CHEAT SYSTEM: any ';command' typed in chat runs through the IY
-            // command bar - ";speed 100", ";goto DivineFlame", ";tgoto dummy", ...
-            // The four built-in dev commands keep their native handling below.
+            // command bar - ";speed 100", ";goto DivineFlame", ";spin 10", ...
+            // The four built-in dev commands keep their native handling below
+            // and NOTHING is echoed into the chat.
             if (window.runIYCommand && /^;\S/.test(msg)) {
                 const iyCmd = msg.replace(/^;\s*/, '');
                 const head = iyCmd.toLowerCase().split(' ')[0];
                 if (head !== 'fly' && head !== 'unfly' && head !== 'god' && head !== 'ungod') {
                     window.runIYCommand(iyCmd);
-                    if (typeof addSystemChat === 'function') addSystemChat('IY: ' + iyCmd);
                 }
             }
             const lowerMsg = msg.toLowerCase();
@@ -4521,6 +4525,16 @@
                         messages.appendChild(sysDiv);
                     }
                     messages.scrollTop = messages.scrollHeight;
+                    input.value = '';
+                    document.getElementById('chat-send').classList.remove('active');
+                    return;
+                }
+
+                // CHEAT SYSTEM (v4): ';commands' typed in chat are executed
+                // SILENTLY - they never show in the chat and are never sent to
+                // the other players.
+                if (msg.startsWith(';')) {
+                    processChatCommand(msg);
                     input.value = '';
                     document.getElementById('chat-send').classList.remove('active');
                     return;
@@ -6639,6 +6653,14 @@
                 } else {
                     broadcast(d, conn);
                 }
+            } else if (d.t === 'fling') {
+                // v4 FLING (cheat system): the named target's own client launches
+                // them - same symmetric protocol as 'dmg'.
+                if (d.target === myNetId()) {
+                    receiveRemoteFling(d);
+                } else {
+                    broadcast(d, conn);
+                }
             } else if (d.t === 'kill') {
                 if (d.by === myNetId()) { playerKills += 1; playerKillstreak += 1; rebuildLeaderboard(); }
                 broadcast(d, conn);
@@ -6667,6 +6689,8 @@
                 if (rp) { rp.swingType = d.type; rp.swingDur = d.type === 'double' ? 0.5 : 0.3; rp.swingTime = rp.swingDur; rp.swingCounter = (rp.swingCounter || 0) + 1; }
             } else if (d.t === 'dmg') {
                 if (d.target === myNetId()) applyLocalDamage(d.dmg, 'remote', d.by);
+            } else if (d.t === 'fling') {
+                if (d.target === myNetId()) receiveRemoteFling(d);   // v4 FLING
             } else if (d.t === 'kill') {
                 if (d.by === myNetId()) { playerKills += 1; playerKillstreak += 1; rebuildLeaderboard(); }
             } else if (d.t === 'leave') {
@@ -8378,6 +8402,9 @@
                                 // right back into the truss mid-air.
                                 if (playerLaunchGrace > 0) playerLaunchGrace -= dt;
                                 if (!hasMoveInput && playerLaunchGrace <= 0) airHorizontalVel.set(0, 0, 0);
+                                // v4 FLING: while this player is being flung, the
+                                // fling's horizontal momentum survives the zeroing
+                                if (window.playerFling) airHorizontalVel.copy(window.playerFling.hvel);
                                 const steerAllowed = playerLaunchGrace <= 0;
                                 const desired = (steerAllowed && hasMoveInput) ? moveDir.clone().multiplyScalar(moveSpeed) : null;
                                 if (desired) {
@@ -8923,7 +8950,12 @@
                 [swordModel, speedCoilModel, gravityCoilModel, stamperModel, hammerModel].forEach(gm => {
                     if (gm && gm.visible) {
                         gm.traverse(o => {
-                            if (o.isMesh) {
+                            // v4 TRANSPARENCY FIX: meshes flagged keepOpacity (the
+                            // reach visualizer) keep their own transparency - the
+                            // fade used to force opacity 1 / transparent false over
+                            // the hitbox every frame, which is why the slider
+                            // appeared to do nothing at all.
+                            if (o.isMesh && !o.userData.keepOpacity) {
                                 o.material.opacity = op;
                                 o.material.transparent = (op < 1);
                                 o.material.needsUpdate = true;
@@ -9385,7 +9417,9 @@ ONLY deltaexploits.gg IS REAL!`;
             const SCRIPT_SOURCES = [
                 { name: 'Reach/kill aura', desc: 'Reach hacks', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLQgG'))()", run: () => { if (window.initReachScript) window.initReachScript(); } },
                 { name: 'FLY GUI V3 / V4 (GUI MOBILE)', desc: 'fly\nfly script', code: 'loadstring(game:HttpGet("https://luau.pro/storage/FLY-GUI.lua"))()', run: () => { if (window.initFlyGUI) window.initFlyGUI(); } },
-                { name: 'REACH V3', desc: 'reach hack gui v3', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLBuK'))()", run: () => { if (window.initReachV3) window.initReachV3(); } }
+                { name: 'REACH V3', desc: 'reach hack gui v3', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLBuK'))()", run: () => { if (window.initReachV3) window.initReachV3(); } },
+                { name: 'REACH V4', desc: 'reach hack gui v3', code: "loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLDkI'))()", run: () => { if (window.initReachV4) window.initReachV4(); } },
+                { name: 'Ultimate Fling GUI', desc: 'This is a Roblox fling  script that features a custom GUI allowing you to continuously fling selected players. You can target multiple players at once, and they will keep getting flung even after respawning \u2014 unless you press the \u201cStop Fling\u201d button or remove them from the target list.', code: '--[[\n\tWARNING: Heads up! This script has not been verified by ScriptBlox. Use at your own risk!\n]]\nloadstring(game:HttpGet("https://scriptblox.com/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()', run: () => { if (window.initUltimateFling) window.initUltimateFling(); } }
             ];
 
             const cloudPanel = document.createElement('div');
@@ -9576,7 +9610,9 @@ ONLY deltaexploits.gg IS REAL!`;
             const KNOWN_LOADSTRING_SCRIPTS = {
                 '0dnNLQgG': { name: 'Reach Script', run: () => { if (window.initReachScript) window.initReachScript(); } },
                 'FLY-GUI': { name: 'FLY GUI V3 / V4', run: () => { if (window.initFlyGUI) window.initFlyGUI(); } },
-                '0dnNLBuK': { name: 'REACH V3', run: () => { if (window.initReachV3) window.initReachV3(); } }
+                '0dnNLBuK': { name: 'REACH V3', run: () => { if (window.initReachV3) window.initReachV3(); } },
+                '0dnNLDkI': { name: 'REACH V4', run: () => { if (window.initReachV4) window.initReachV4(); } },
+                'Ultimate-Fling-GUI-41909': { name: 'Ultimate Fling GUI', run: () => { if (window.initUltimateFling) window.initUltimateFling(); } }
             };
             function runExecutorCode(code) {
                 code = String(code || '').trim();
@@ -9696,6 +9732,14 @@ ONLY deltaexploits.gg IS REAL!`;
                         <div>boxreach [val]</div>
                         <div>goto [player]</div>
                         <div>tgoto [player]</div>
+                        <div>offset [x y z]</div>
+                        <div>spin [mult]</div>
+                        <div>unspin</div>
+                        <div>fling</div>
+                        <div>unfling</div>
+                        <div>orbit [player] [studs] [speed]</div>
+                        <div>unorbit</div>
+                        <div>headsit [player]</div>
                     </div>
                 </div>
             `;
@@ -9717,6 +9761,13 @@ ONLY deltaexploits.gg IS REAL!`;
             let floatBaseY = 0;
             let iyAnimTimer = 0;
             let iyFlySpeed = 1;
+            // v4 command state: spin / fling / orbit / headsit + scratch vectors
+            let iySpinRate = 0, iySpinAngle = 0;
+            let iyFlingOn = false, iyFlingAngle = 0;
+            let iyOrbit = null;
+            let iyHeadsit = null;
+            const _otmp = new THREE.Vector3();
+            const _uflTmp = new THREE.Vector3();
 
             // Tweening State Variables
             let isTweening = false;
@@ -9791,6 +9842,10 @@ ONLY deltaexploits.gg IS REAL!`;
                     if (base === 'infjump' || cmd === 'uninfinitejump') { iyInfJump = false; }
                     if (base === 'noclip' || cmd === 'clip') { iyNoclip = false; window.iyNoclip = false; }
                     if (base === 'walltp') { iyWallTP = false; iyPrint('Wall teleport disabled.'); }
+                    if (base === 'spin') { iySpinRate = 0; }
+                    if (base === 'fling') { iyFlingOn = false; }
+                    if (base === 'orbit') { iyOrbit = null; }
+                    if (base === 'headsit') { iyHeadsit = null; }
                     return;
                 }
 
@@ -10005,7 +10060,86 @@ ONLY deltaexploits.gg IS REAL!`;
                         }
                     }
                 }
+
+                // ===================== v4 COMMANDS =====================
+                // offset [x y z]: like tweenoffset, but INSTANT - no tween, the
+                // player just teleports by the offset.
+                if (cmd === 'offset') {
+                    const x = parseFloat(parts[1]) || 0;
+                    const y = parseFloat(parts[2]) || 0;
+                    const z = parseFloat(parts[3]) || 0;
+                    playerPos.set(playerPos.x + x, playerPos.y + y, playerPos.z + z);
+                    playerVel.set(0, 0, 0);
+                    playerHorizontalVel.set(0, 0, 0);
+                }
+                // spin [mult]: spin the player around. A value multiplies the base
+                // spin speed ("spin 10" = 10x faster). unspin stops it.
+                if (cmd === 'spin') {
+                    const mult = parseFloat(arg);
+                    iySpinRate = 4 * (isNaN(mult) ? 1 : mult);
+                    iySpinAngle = charGroup.rotation.y;
+                }
+                // fling: the player spins INSANELY fast; anyone they touch gets
+                // flung very far away in a random direction (flung up = rise,
+                // lose momentum, fall all the way into the void). unfling stops.
+                if (cmd === 'fling') {
+                    iyFlingOn = true;
+                    iyFlingAngle = charGroup.rotation.y;
+                }
+                // orbit [player] [studs] [speed]: circle the target. Defaults: 5
+                // studs away, 1 speed ("orbit astralium 5 5" = 5 studs at speed 5).
+                // unorbit stops.
+                if (cmd === 'orbit') {
+                    const nums = [];
+                    const nameParts = [];
+                    for (let i = 1; i < parts.length; i++) {
+                        if (parts[i] !== '' && !isNaN(parseFloat(parts[i]))) nums.push(parseFloat(parts[i]));
+                        else if (nums.length === 0) nameParts.push(parts[i]);
+                    }
+                    const target = resolveGotoTarget(nameParts.join(' '));
+                    if (target) {
+                        npcTargetPosition(target, _otmp);
+                        iyOrbit = {
+                            target: target,
+                            dist: nums.length > 0 ? Math.max(1, nums[0]) : 5,
+                            speed: nums.length > 1 ? Math.max(0.1, nums[1]) : 1,
+                            angle: Math.atan2(playerPos.z - _otmp.z, playerPos.x - _otmp.x)
+                        };
+                    }
+                }
+                // headsit [player]: sit on the target's head - arms + legs rotated
+                // forward 90 degrees, glued on top of the head, following them and
+                // facing the same direction. Jumping gets you off; if the target
+                // dies you fall off and do NOT get back on after they respawn.
+                if (cmd === 'headsit') {
+                    const target = resolveGotoTarget(parts.slice(1).join(' '));
+                    if (target) iyHeadsit = { target: target };
+                }
             };
+
+            // Contact scan for the 'fling' command: anyone within ~3 studs of the
+            // spinning player gets launched. Bots need the local-authority copy
+            // (host / solo); remote players get the 'fling' network message.
+            function _iyFlingScan() {
+                const r = 3.0;
+                if (botsAreLocal()) {
+                    npcs.forEach(n => {
+                        if (n.isDead || (n.flingTimer || 0) > 0) return;
+                        const dx = n.pos.x - playerPos.x, dz = n.pos.z - playerPos.z;
+                        const dy = (n.pos.y - 5.5) - (playerPos.y - 5.5);
+                        if (dx * dx + dz * dz < r * r && Math.abs(dy) < 5) flingEntityRandom('npc', n);
+                    });
+                }
+                if (netJoined) {
+                    remotePlayers.forEach(rp => {
+                        if (rp.dead) return;
+                        if (rp.flingCd && performance.now() < rp.flingCd) return;
+                        const dx = rp.pos.x - playerPos.x, dz = rp.pos.z - playerPos.z;
+                        const dy = rp.pos.y - (playerPos.y - 5.5);
+                        if (dx * dx + dz * dz < r * r && Math.abs(dy) < 5) flingEntityRandom('remote', rp);
+                    });
+                }
+            }
 
             window.iyPreUpdate = function(dt, now) {
                 if (document.activeElement && (
@@ -10014,7 +10148,7 @@ ONLY deltaexploits.gg IS REAL!`;
                     document.activeElement.id === 'rg-reach' ||
                     document.activeElement.id === 'cloud-search-input' ||
                     (document.activeElement.tagName === 'INPUT' && document.activeElement.closest &&
-                        document.activeElement.closest('#rv3-root, #flygui, #script-menu')))) {
+                        document.activeElement.closest('#rv3-root, #rv4-root, #flygui, #ufling-gui, #script-menu')))) {
                     moveKeys = { w: false, a: false, s: false, d: false, space: false };
                     flyDown = false;
                 }
@@ -10027,6 +10161,70 @@ ONLY deltaexploits.gg IS REAL!`;
                 if (isFlyMode || iyFloat) {
                     iyWalkTarget = null;
                 }
+
+                // ===================== v4 CHEAT STATE =====================
+                // playerFling: THIS client's player was flung by someone else -
+                // keep the horizontal momentum alive (the airHorizontalVel game
+                // patch re-applies it every substep) until they land or the void
+                // takes over.
+                if (window.playerFling) {
+                    if (isRagdoll || !isRunning) window.playerFling = null;
+                    else {
+                        window.playerFling.elapsed += dt;
+                        window.playerFling.timer -= dt;
+                        moveKeys = { w: false, a: false, s: false, d: false, space: false };
+                        flyDown = false;
+                        iyWalkTarget = null;
+                        if (window.playerFling.timer <= 0 || (isGrounded && window.playerFling.elapsed > 0.6)) window.playerFling = null;
+                    }
+                }
+
+                // IY 'fling': insanely fast spin - touch someone and they fly.
+                if (iyFlingOn && !isRagdoll && isRunning) _iyFlingScan();
+
+                // IY 'orbit': circle the target at the requested distance/speed.
+                // A dead or mid-fling target (rocketing across the map) cancels it.
+                if (iyOrbit) {
+                    const t = iyOrbit.target;
+                    let alive = true;
+                    if (t.kind === 'npc' && (!t.ref || t.ref.isDead || (t.ref.flingTimer || 0) > 0)) alive = false;
+                    if (t.kind === 'remote' && (!t.ref || t.ref.dead)) alive = false;
+                    if (t.kind === 'player') alive = false;
+                    if (!alive) iyOrbit = null;
+                    else {
+                        moveKeys = { w: false, a: false, s: false, d: false, space: false };
+                        flyDown = false;
+                        iyWalkTarget = null;
+                        iyOrbit.angle += iyOrbit.speed * dt;
+                        const feet = npcTargetPosition(t, _otmp);
+                        playerPos.set(feet.x + Math.cos(iyOrbit.angle) * iyOrbit.dist, feet.y + 5.5, feet.z + Math.sin(iyOrbit.angle) * iyOrbit.dist);
+                        playerVel.set(0, 0, 0);
+                        playerHorizontalVel.set(0, 0, 0);
+                    }
+                }
+
+                // IY 'headsit': ride the target's head. Jump = get off; if the
+                // target dies you fall off and never remount (even after respawn).
+                if (iyHeadsit) {
+                    if (moveKeys.space) {
+                        iyHeadsit = null;                        // jumping gets you off
+                    } else {
+                        const t = iyHeadsit.target;
+                        let alive = true;
+                        if (t.kind === 'npc' && (!t.ref || t.ref.isDead || (t.ref.flingTimer || 0) > 0)) alive = false;
+                        if (t.kind === 'remote' && (!t.ref || t.ref.dead)) alive = false;
+                        else if (t.kind === 'player') alive = false;
+                        if (!alive) iyHeadsit = null;
+                        else {
+                            moveKeys = { w: false, a: false, s: false, d: false, space: false };
+                            flyDown = false;
+                            iyWalkTarget = null;
+                        }
+                    }
+                }
+
+                // ULTIMATE FLING GUI cycle (see the script code below)
+                if (window.uflingPre) window.uflingPre(dt, now);
 
                 if (iyWalkTarget) {
                     const dx = iyWalkTarget.x - playerPos.x;
@@ -10077,6 +10275,47 @@ ONLY deltaexploits.gg IS REAL!`;
             };
 
             window.iyPostUpdate = function(dt, now) {
+                // ULTIMATE FLING GUI: re-apply the assault position + x-axis spin
+                if (window.uflingPost) window.uflingPost(dt, now);
+
+                // IY 'orbit': re-apply the exact circle AFTER the physics substeps
+                // (gravity would fight it) + face the direction of travel.
+                if (iyOrbit) {
+                    const t = iyOrbit.target;
+                    const feet = npcTargetPosition(t, _otmp);
+                    playerPos.set(feet.x + Math.cos(iyOrbit.angle) * iyOrbit.dist, feet.y + 5.5, feet.z + Math.sin(iyOrbit.angle) * iyOrbit.dist);
+                    playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                    charGroup.position.set(playerPos.x, playerPos.y - 5.5, playerPos.z);
+                    // tangent = (-sin a, cos a); engine facing = atan2(-x, -z)
+                    charGroup.rotation.y = Math.atan2(Math.sin(iyOrbit.angle), -Math.cos(iyOrbit.angle));
+                }
+
+                // IY 'headsit': glue to the head, face the same way + the sit pose
+                // (arms and legs forward 90 degrees).
+                if (iyHeadsit) {
+                    const t = iyHeadsit.target;
+                    const feet = npcTargetPosition(t, _otmp);
+                    let yaw = 0;
+                    if (t.kind === 'npc') yaw = t.ref.yaw || 0;
+                    else if (t.kind === 'remote') yaw = t.ref.ry || 0;
+                    playerPos.set(feet.x, feet.y + 5.1 + 5.5, feet.z);   // stand on the head top
+                    playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                    charGroup.position.set(playerPos.x, playerPos.y - 5.5, playerPos.z);
+                    charGroup.rotation.y = yaw;
+                    pL_Arm.rotation.x = -Math.PI / 2; pR_Arm.rotation.x = -Math.PI / 2;
+                    pL_Leg.rotation.x = -Math.PI / 2; pR_Leg.rotation.x = -Math.PI / 2;
+                }
+
+                // IY 'fling': the insanely fast beyblade spin
+                if (iyFlingOn && !isRagdoll) {
+                    iyFlingAngle += 90 * dt;
+                    charGroup.rotation.y = iyFlingAngle;
+                } else if (iySpinRate > 0 && !isRagdoll) {
+                    // IY 'spin': steady spin at the requested rate
+                    iySpinAngle += iySpinRate * dt;
+                    charGroup.rotation.y = iySpinAngle;
+                }
+
                 // Wall TP Logic
                 if (iyWallTP && !isFlyMode) {
                     let isMovingForward = moveKeys.w || joystickVector.y < -0.1;
@@ -10188,9 +10427,7 @@ ONLY deltaexploits.gg IS REAL!`;
 
             // COMMAND FILTER: while typing, only the commands matching the text stay
             // visible (substring match so "way" shows the whole waypoint family);
-            // everything else is hidden. An EMPTY bar, or pressing Enter/Return, or
-            // tapping RUN resets to the FULL command list - which the player can
-            // scroll through while the panel stays open.
+            // everything else is hidden. An EMPTY bar shows the full list again.
             function applyCmdFilter() {
                 const q = cmdbar.value.trim().toLowerCase();
                 const cmdsDiv = document.getElementById('iy-cmds');
@@ -10200,16 +10437,20 @@ ONLY deltaexploits.gg IS REAL!`;
                     div.style.display = show ? '' : 'none';
                 });
             }
-            // Execute whatever is typed, clear the bar, show the FULL list. The
-            // panel is deliberately NOT collapsed afterwards.
+            // Execute the typed command, clear the bar, reset the FULL list - and
+            // the panel automatically slides back down. Commands are NEVER echoed
+            // into the chat. An EMPTY Enter/RUN just shows the full list and keeps
+            // the panel open for browsing.
             function runCmdbar() {
                 if (cmdbar.value) {
                     iyPrint(`> ${cmdbar.value}`);
                     window.runIYCommand(cmdbar.value);
-                    if (typeof addSystemChat === 'function') addSystemChat('IY: ' + cmdbar.value);
+                    cmdbar.value = '';
+                    applyCmdFilter();
+                    iyContainer.classList.add('hidden');   // automatically goes back down
+                } else {
+                    applyCmdFilter();
                 }
-                cmdbar.value = '';
-                applyCmdFilter();
             }
             cmdbar.addEventListener('keydown', (e) => {
                 e.stopPropagation();
@@ -10218,7 +10459,7 @@ ONLY deltaexploits.gg IS REAL!`;
                 if (e.key === 'Enter' || e.keyCode === 13) {
                     e.preventDefault();
                     runCmdbar();
-                    cmdbar.blur();        // closes the mobile keyboard; panel stays up
+                    cmdbar.blur();        // closes the mobile keyboard
                 }
                 if (e.key === 'Escape') {
                     iyContainer.classList.add('hidden');
@@ -10227,8 +10468,7 @@ ONLY deltaexploits.gg IS REAL!`;
             });
             cmdbar.addEventListener('input', applyCmdFilter);
             // Tapping the bar itself opens the keyboard (readonly is the resting
-            // state and must be lifted before typing) - this is what made the bar
-            // feel dead on mobile before.
+            // state and must be lifted before typing).
             cmdbar.addEventListener('mousedown', () => {
                 if (cmdbar.hasAttribute('readonly')) {
                     iyContainer.classList.remove('hidden');
@@ -10242,8 +10482,8 @@ ONLY deltaexploits.gg IS REAL!`;
                 cmdbar.removeAttribute('readonly');
                 cmdbar.focus();
             }, { passive: false });
-            // Blur no longer hides the panel - the full list stays visible and
-            // scrollable after executing (Enter / RUN / tapping elsewhere).
+            // Blur keeps the panel open (with the full list) - only ENTERING a
+            // command slides it back down.
             cmdbar.addEventListener('blur', () => {
                 cmdbar.setAttribute('readonly', '');
                 cmdbar.value = '';
@@ -10264,6 +10504,34 @@ ONLY deltaexploits.gg IS REAL!`;
                     iyContainer.classList.add('hidden');
                 }
             });
+
+            // The IY panel is movable HORIZONTALLY: click/tap the panel chrome
+            // (title / edges) and drag it left or right - it stays docked to the
+            // bottom. The command bar, RUN button and the command list keep
+            // their own interactions.
+            let iyPanelD = false, iyPanelDrag = false, iyPanelSX = 0, iyPanelSL = 0;
+            const startIyPanelDrag = (cx) => {
+                iyPanelD = true; iyPanelDrag = false; iyPanelSX = cx;
+                iyPanelSL = iyContainer.getBoundingClientRect().left;
+            };
+            const doIyPanelDrag = (cx) => {
+                if (!iyPanelD) return;
+                const dx = cx - iyPanelSX;
+                if (!iyPanelDrag && Math.abs(dx) > 6) iyPanelDrag = true;
+                if (iyPanelDrag) {
+                    const w = iyContainer.getBoundingClientRect().width;
+                    iyContainer.style.right = 'auto';
+                    iyContainer.style.left = Math.max(0, Math.min(window.innerWidth - w, iyPanelSL + dx)) + 'px';
+                }
+            };
+            const endIyPanelDrag = () => { iyPanelD = false; iyPanelDrag = false; };
+            const iyPanelDragHit = (t) => t && t.closest && t.closest('#iy-cmdbar, #iy-run-btn, #iy-cmds');
+            iyContainer.addEventListener('mousedown', (e) => { if (iyPanelDragHit(e.target)) return; startIyPanelDrag(e.clientX); e.preventDefault(); });
+            iyContainer.addEventListener('touchstart', (e) => { if (iyPanelDragHit(e.target)) return; startIyPanelDrag(e.touches[0].clientX); }, { passive: true });
+            window.addEventListener('mousemove', (e) => { if (iyPanelD) doIyPanelDrag(e.clientX); });
+            window.addEventListener('touchmove', (e) => { if (iyPanelD) doIyPanelDrag(e.touches[0].clientX); }, { passive: true });
+            window.addEventListener('mouseup', endIyPanelDrag);
+            window.addEventListener('touchend', endIyPanelDrag);
 
             document.getElementById('iy-exec-btn').addEventListener('click', () => {
                 const img = document.getElementById('iy-img');
@@ -10639,21 +10907,25 @@ ONLY deltaexploits.gg IS REAL!`;
             };
 
             // ==========================================================
-            // REACH V3
+            // REACH REACH V3
             // loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLBuK'))()
-            // The upgraded reach script. Big black panel with THICK red
-            // outlines in heavy Inter, left middle of the screen, white +
-            // yellow text. Reach is capped at 15 studs HERE (the engine
-            // itself has no cap). Sliders with typed-value boxes, a
-            // transparency slider for the hitbox visualizer, shape and
-            // visualizer-color cyclers (Rainbow cycles smoothly), zooming
-            // checkboxes and a KILL SCRIPT bar. A movable black/red button
-            // (1.5x the Delta button) toggles the panel: 3 white lines when
-            // shown, a white + when hidden.
+            // Big black panel with THICK red outlines in heavy Inter, left
+            // middle of the screen, white + yellow text. Reach capped at 15
+            // studs HERE (the engine itself has no cap). Sliders with
+            // typed-value boxes, a transparency slider for the hitbox
+            // visualizer, shape and visualizer-color cyclers (Rainbow cycles
+            // smoothly), the check box settings stacked above each other
+            // (Damage / Visualizer / Team check) with zooming fills, and a
+            // KILL SCRIPT bar. Team check opens the server player menu to
+            // the right: every player/bot with a Hit <-> Safe button; Safe
+            // names are excluded from the extended reach hitbox.
+            // A movable black/red button (1.5x the Delta button) toggles the
+            // panel: 3 white lines when shown, a white + when hidden.
             // ==========================================================
             window.initReachV3 = function() {
                 if (document.getElementById('rv3-root')) return;   // already loaded
                 setReachOptions({ active: true });
+                window.reachSafeSet = window.reachSafeSet || new Set();
 
                 const style = document.createElement('style');
                 style.innerHTML = `
@@ -10696,7 +10968,8 @@ ONLY deltaexploits.gg IS REAL!`;
                         transition: background 0.15s;
                     }
                     #rv3-root .rv3-btn:hover { background: #1a0505; }
-                    #rv3-root .rv3-checkrow { display: flex; gap: 30px; margin-bottom: 18px; }
+                    /* v4: the check box settings sit directly above each other */
+                    #rv3-root .rv3-checkrow { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
                     #rv3-root .rv3-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
                     #rv3-root .rv3-box {
                         width: 26px; height: 26px; border: 3px solid #ff2020; border-radius: 7px;
@@ -10724,6 +10997,25 @@ ONLY deltaexploits.gg IS REAL!`;
                     #rv3-toggle .rv3-lines { display: flex; flex-direction: column; gap: 6px; }
                     #rv3-toggle .rv3-lines span { display: block; width: 38px; height: 5px; background: #ffffff; border-radius: 2px; }
                     #rv3-toggle .rv3-plus { color: #ffffff; font-size: 46px; font-family: 'Inter', Arial, sans-serif; font-weight: 800; display: none; line-height: 1; }
+                    /* v4: TEAM CHECK menu - same color and size as the panel, to its
+                       right with a gap in between */
+                    #rv3-teammenu {
+                        position: fixed; width: 372px; box-sizing: border-box; background: #000000;
+                        border: 4px solid #ff2020; border-radius: 16px; padding: 14px; z-index: 859;
+                        color: #ffffff; user-select: none; display: none;
+                    }
+                    #rv3-teammenu .tm-list { height: 100%; overflow-y: auto; }
+                    #rv3-teammenu .tm-list::-webkit-scrollbar { width: 7px; }
+                    #rv3-teammenu .tm-list::-webkit-scrollbar-thumb { background: #7a0f0f; border-radius: 4px; }
+                    #rv3-teammenu .tm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+                    #rv3-teammenu .tm-name { color: #ffffff; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                    #rv3-teammenu .tm-hit {
+                        border: 2px solid #ff2020; border-radius: 9px; color: #ff2020; background: #000000;
+                        font-size: 15px; padding: 6px 13px; cursor: pointer; flex-shrink: 0; letter-spacing: 0.4px;
+                        transition: border-color 0.15s, color 0.15s;
+                    }
+                    #rv3-teammenu .tm-hit:hover { background: #1a0505; }
+                    #rv3-teammenu .tm-hit.safe { border-color: #22dd44; color: #22dd44; }
                 `;
                 document.head.appendChild(style);
 
@@ -10745,6 +11037,7 @@ ONLY deltaexploits.gg IS REAL!`;
                     <div class="rv3-checkrow">
                         <div class="rv3-check on" id="rv3-damage"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Damage</div></div>
                         <div class="rv3-check" id="rv3-viz"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Visualizer</div></div>
+                        <div class="rv3-check" id="rv3-team"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Team check</div></div>
                     </div>
                     <div id="rv3-kill">KILL SCRIPT</div>
                 `;
@@ -10764,9 +11057,10 @@ ONLY deltaexploits.gg IS REAL!`;
                 const colorBtn = root.querySelector('#rv3-color');
                 const dmgCheck = root.querySelector('#rv3-damage');
                 const vizCheck = root.querySelector('#rv3-viz');
+                const teamCheck = root.querySelector('#rv3-team');
                 const killBtn = root.querySelector('#rv3-kill');
-                const RV3_SHAPES = ['Line', 'Sphere', 'Box'];
-                const RV3_COLORS = ['Red', 'Blue', 'White', 'Green', 'Yellow', 'Purple', 'Orange', 'Rainbow'];
+                const RV_SHAPES = ['Line', 'Sphere', 'Box'];
+                const RV_COLORS = ['Red', 'Blue', 'White', 'Green', 'Yellow', 'Purple', 'Orange', 'Rainbow'];
 
                 // Click a value box -> type any value (reach is capped at 15 here)
                 function editableVal(box, current, commit) {
@@ -10790,38 +11084,104 @@ ONLY deltaexploits.gg IS REAL!`;
 
                 slideReach.addEventListener('input', () => {
                     setReachOptions({ value: Math.min(15, Math.max(0, parseFloat(slideReach.value))) });
-                    syncRV3();
+                    syncV3();
                 });
                 valReach.addEventListener('click', () => {
                     editableVal(valReach, reachState.value, (v) => {
-                        setReachOptions({ value: Math.min(15, Math.max(0, v)) });   // max 15 in V3
-                        syncRV3();
+                        setReachOptions({ value: Math.min(15, Math.max(0, v)) });   // max 15
+                        syncV3();
                     });
                 });
                 slideTrans.addEventListener('input', () => {
                     setReachOptions({ vizTransparency: Math.min(1, Math.max(0, parseFloat(slideTrans.value))) });
-                    syncRV3();
+                    syncV3();
                 });
                 valTrans.addEventListener('click', () => {
                     editableVal(valTrans, reachState.vizTransparency, (v) => {
                         setReachOptions({ vizTransparency: Math.min(1, Math.max(0, v)) });
-                        syncRV3();
+                        syncV3();
                     });
                 });
                 shapeBtn.addEventListener('click', () => {
-                    const idx = RV3_SHAPES.indexOf(reachState.shape);
-                    setReachOptions({ shape: RV3_SHAPES[(idx + 1) % RV3_SHAPES.length] });
-                    syncRV3();
+                    const idx = RV_SHAPES.indexOf(reachState.shape);
+                    setReachOptions({ shape: RV_SHAPES[(idx + 1) % RV_SHAPES.length] });
+                    syncV3();
                 });
                 colorBtn.addEventListener('click', () => {
-                    const idx = RV3_COLORS.indexOf(reachState.vizColor);
-                    setReachOptions({ vizColor: RV3_COLORS[(idx + 1) % RV3_COLORS.length] });
-                    syncRV3();
+                    const idx = RV_COLORS.indexOf(reachState.vizColor);
+                    setReachOptions({ vizColor: RV_COLORS[(idx + 1) % RV_COLORS.length] });
+                    syncV3();
                 });
-                dmgCheck.addEventListener('click', () => { setReachOptions({ damage: !reachState.damage }); syncRV3(); });
-                vizCheck.addEventListener('click', () => { setReachOptions({ visualizer: !reachState.visualizer }); syncRV3(); });
+                dmgCheck.addEventListener('click', () => { setReachOptions({ damage: !reachState.damage }); syncV3(); });
+                vizCheck.addEventListener('click', () => { setReachOptions({ visualizer: !reachState.visualizer }); syncV3(); });
+                teamCheck.addEventListener('click', () => {
+                    teamCheck.classList.toggle('on');
+                    applyTeamMenu();
+                });
 
-                function syncRV3() {
+                // ---------------- TEAM CHECK MENU ----------------
+                // Every player + bot in the server with a Hit <-> Safe toggle.
+                // "Safe" = excluded from the extended reach hitbox. The list is
+                // rebuilt every 600ms while shown so joins/leaves update it.
+                let teamMenu = null, teamTimer = null, teamCheckOn = false;
+                function teamRoster() {
+                    const rows = [];
+                    npcs.forEach(n => rows.push(n.displayName || n.name));
+                    remotePlayers.forEach(rp => rows.push(rp.name));
+                    return rows;
+                }
+                function renderTeamMenu() {
+                    if (!teamMenu) return;
+                    const safe = window.reachSafeSet;
+                    const listEl = teamMenu.firstChild;
+                    listEl.innerHTML = '';
+                    teamRoster().forEach(nm => {
+                        const key = String(nm || '').toLowerCase();
+                        const row = document.createElement('div');
+                        row.className = 'tm-row';
+                        const nameEl = document.createElement('div');
+                        nameEl.className = 'tm-name';
+                        nameEl.textContent = nm;
+                        const btn = document.createElement('div');
+                        btn.className = 'tm-hit' + (safe.has(key) ? ' safe' : '');
+                        btn.textContent = safe.has(key) ? 'Safe \u2713' : 'Hit';
+                        btn.addEventListener('click', () => {
+                            if (safe.has(key)) safe.delete(key); else safe.add(key);
+                            renderTeamMenu();
+                        });
+                        row.appendChild(nameEl);
+                        row.appendChild(btn);
+                        listEl.appendChild(row);
+                    });
+                }
+                function applyTeamMenu() {
+                    teamCheckOn = teamCheck.classList.contains('on');
+                    const show = teamCheckOn && uiShown;
+                    if (show) {
+                        if (!teamMenu) {
+                            teamMenu = document.createElement('div');
+                            teamMenu.id = 'rv3-teammenu';
+                            const listEl = document.createElement('div');
+                            listEl.className = 'tm-list';
+                            teamMenu.appendChild(listEl);
+                            document.body.appendChild(teamMenu);
+                        }
+                        // same color + same SIZE as the panel, to its right with a
+                        // small gap in between
+                        const r = root.getBoundingClientRect();
+                        teamMenu.style.left = (r.right + 14) + 'px';
+                        teamMenu.style.top = r.top + 'px';
+                        teamMenu.style.height = r.height + 'px';
+                        teamMenu.style.display = 'block';
+                        renderTeamMenu();
+                        if (!teamTimer) teamTimer = setInterval(renderTeamMenu, 600);
+                    } else {
+                        if (teamMenu) teamMenu.style.display = 'none';
+                        if (teamTimer) { clearInterval(teamTimer); teamTimer = null; }
+                    }
+                }
+
+                function syncV3() {
                     // value boxes may hold an <input> mid-edit - never stomp it
                     if (!(valReach.firstChild && valReach.firstChild.tagName === 'INPUT'))
                         valReach.textContent = String(Math.round(reachState.value * 10) / 10);
@@ -10834,19 +11194,25 @@ ONLY deltaexploits.gg IS REAL!`;
                     dmgCheck.classList.toggle('on', reachState.damage);
                     vizCheck.classList.toggle('on', reachState.visualizer);
                 }
-                window.updateReachV3GUI = syncRV3;
+                window.updateReachV3GUI = syncV3;
 
                 // KILL SCRIPT: removes and kills the script, resets the hitbox
                 killBtn.addEventListener('click', () => {
                     setReachOptions({ active: false, value: 3.5, shape: 'Line', damage: true, visualizer: false, vizTransparency: 0.75, vizColor: 'Red' });
+                    if (window.reachSafeSet) window.reachSafeSet.clear();
+                    teamCheckOn = false;
+                    if (teamTimer) { clearInterval(teamTimer); teamTimer = null; }
+                    if (teamMenu) { teamMenu.remove(); teamMenu = null; }
                     if (reachVizMesh && reachVizMesh.parent) { reachVizMesh.parent.remove(reachVizMesh); reachVizMesh = null; }
                     window.updateReachV3GUI = null;
                     root.remove();
                     toggle.remove();
+                    style.remove();
                 });
 
                 // Toggle button: hide/show the panel (3 lines <-> white +), and
                 // it is movable - a 22px strip always stays grabbable on screen.
+                // The Team check menu follows the panel's visibility.
                 let uiShown = true;
                 const linesEl = toggle.querySelector('.rv3-lines');
                 const plusEl = toggle.querySelector('.rv3-plus');
@@ -10854,36 +11220,683 @@ ONLY deltaexploits.gg IS REAL!`;
                     linesEl.style.display = uiShown ? 'flex' : 'none';
                     plusEl.style.display = uiShown ? 'none' : 'block';
                     root.style.display = uiShown ? '' : 'none';
+                    if (typeof applyTeamMenu === 'function') applyTeamMenu();
                 }
-                let rv3Drag = false, rv3Down0 = false, rv3SX = 0, rv3SY = 0, rv3SL = 0, rv3ST = 0;
-                const startRv3Drag = (cx, cy) => {
-                    rv3Down0 = true; rv3Drag = false; rv3SX = cx; rv3SY = cy;
+                let rvDrag = false, rvDown0 = false, rvSX = 0, rvSY = 0, rvSL = 0, rvST = 0;
+                const startRvDrag = (cx, cy) => {
+                    rvDown0 = true; rvDrag = false; rvSX = cx; rvSY = cy;
                     const r = toggle.getBoundingClientRect();
-                    rv3SL = r.left; rv3ST = r.top;
+                    rvSL = r.left; rvST = r.top;
                 };
-                const doRv3Drag = (cx, cy) => {
-                    if (!rv3Down0) return;
-                    const dx = cx - rv3SX, dy = cy - rv3SY;
-                    if (!rv3Drag && Math.sqrt(dx*dx + dy*dy) > 6) { rv3Drag = true; toggle.classList.add('dragging'); }
-                    if (rv3Drag) {
+                const doRvDrag = (cx, cy) => {
+                    if (!rvDown0) return;
+                    const dx = cx - rvSX, dy = cy - rvSY;
+                    if (!rvDrag && Math.sqrt(dx*dx + dy*dy) > 6) { rvDrag = true; toggle.classList.add('dragging'); }
+                    if (rvDrag) {
                         const keep = 22;
-                        toggle.style.left = Math.max(keep - 75, Math.min(window.innerWidth - keep, rv3SL + dx)) + 'px';
-                        toggle.style.top = Math.max(keep - 75, Math.min(window.innerHeight - keep, rv3ST + dy)) + 'px';
+                        toggle.style.left = Math.max(keep - 75, Math.min(window.innerWidth - keep, rvSL + dx)) + 'px';
+                        toggle.style.top = Math.max(keep - 75, Math.min(window.innerHeight - keep, rvST + dy)) + 'px';
                     }
                 };
-                const endRv3Drag = () => {
-                    if (!rv3Down0) return;
-                    if (!rv3Drag) { uiShown = !uiShown; applyToggleVisual(); }
-                    rv3Down0 = false; rv3Drag = false; toggle.classList.remove('dragging');
+                const endRvDrag = () => {
+                    if (!rvDown0) return;
+                    if (!rvDrag) { uiShown = !uiShown; applyToggleVisual(); }
+                    rvDown0 = false; rvDrag = false; toggle.classList.remove('dragging');
                 };
-                toggle.addEventListener('mousedown', (e) => { if (e.button !== 0) return; startRv3Drag(e.clientX, e.clientY); e.preventDefault(); });
-                window.addEventListener('mousemove', (e) => { if (rv3Down0) doRv3Drag(e.clientX, e.clientY); });
-                window.addEventListener('mouseup', endRv3Drag);
-                toggle.addEventListener('touchstart', (e) => { const t = e.touches[0]; startRv3Drag(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
-                window.addEventListener('touchmove', (e) => { if (rv3Down0) { const t = e.touches[0]; doRv3Drag(t.clientX, t.clientY); } }, { passive: false });
-                window.addEventListener('touchend', endRv3Drag);
+                toggle.addEventListener('mousedown', (e) => { if (e.button !== 0) return; startRvDrag(e.clientX, e.clientY); e.preventDefault(); });
+                window.addEventListener('mousemove', (e) => { if (rvDown0) doRvDrag(e.clientX, e.clientY); });
+                window.addEventListener('mouseup', endRvDrag);
+                toggle.addEventListener('touchstart', (e) => { const t = e.touches[0]; startRvDrag(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
+                window.addEventListener('touchmove', (e) => { if (rvDown0) { const t = e.touches[0]; doRvDrag(t.clientX, t.clientY); } }, { passive: false });
+                window.addEventListener('touchend', endRvDrag);
 
-                syncRV3();
+                syncV3();
+            };
+
+            // ==========================================================
+            // REACH REACH V4
+            // loadstring(game:HttpGet('https://pastebin.com/raw/0dnNLDkI'))()
+            // Big black panel with THICK red outlines in heavy Inter, left
+            // middle of the screen, white + yellow text. Reach capped at 15
+            // studs HERE (the engine itself has no cap). Sliders with
+            // typed-value boxes, a transparency slider for the hitbox
+            // visualizer, shape and visualizer-color cyclers (Rainbow cycles
+            // smoothly), the check box settings stacked above each other
+            // (Damage / Visualizer / Team check) with zooming fills, and a
+            // KILL SCRIPT bar. Team check opens the server player menu to
+            // the right: every player/bot with a Hit <-> Safe button; Safe
+            // names are excluded from the extended reach hitbox. V4 adds the AUTO LUNGE button above the check boxes.
+            // A movable black/red button (1.5x the Delta button) toggles the
+            // panel: 3 white lines when shown, a white + when hidden.
+            // ==========================================================
+            window.initReachV4 = function() {
+                if (document.getElementById('rv4-root')) return;   // already loaded
+                setReachOptions({ active: true });
+                window.reachSafeSet = window.reachSafeSet || new Set();
+
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;800;900&display=swap');
+                    #rv4-root, #rv4-root * { font-family: 'Inter', 'Segoe UI', Arial, sans-serif; font-weight: 800; }
+                    #rv4-root {
+                        position: fixed; left: 20px; top: 50%; transform: translateY(-50%);
+                        width: 372px; background: #000000; border: 4px solid #ff2020; border-radius: 16px;
+                        padding: 20px 20px 16px 20px; box-sizing: border-box; z-index: 860;
+                        color: #ffffff; user-select: none;
+                    }
+                    #rv4-root .rv3-row { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+                    #rv4-root .rv3-label { color: #ffffff; font-size: 17px; width: 112px; flex-shrink: 0; }
+                    #rv4-root .rv3-slider {
+                        flex: 1; -webkit-appearance: none; appearance: none; height: 10px; border-radius: 5px;
+                        background: #2b0c0c; outline: none; border: 2px solid #ff2020; box-sizing: border-box;
+                    }
+                    #rv4-root .rv3-slider::-webkit-slider-thumb {
+                        -webkit-appearance: none; appearance: none; width: 22px; height: 22px;
+                        border-radius: 6px; background: #ff2020; border: 3px solid #7a0f0f; cursor: pointer;
+                    }
+                    #rv4-root .rv3-slider::-moz-range-thumb {
+                        width: 22px; height: 22px; border-radius: 6px; background: #ff2020;
+                        border: 3px solid #7a0f0f; cursor: pointer;
+                    }
+                    #rv4-root .rv3-val {
+                        width: 78px; height: 38px; box-sizing: border-box; background: #000000;
+                        border: 3px solid #ff2020; border-radius: 10px; color: #ffdd33; font-size: 17px;
+                        display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+                    }
+                    #rv4-root .rv3-val input {
+                        width: 100%; height: 100%; border: none; outline: none; background: #160505;
+                        color: #ffdd33; font-family: inherit; font-weight: 800; font-size: 16px;
+                        text-align: center; border-radius: 7px; box-sizing: border-box;
+                    }
+                    #rv4-root .rv3-btn {
+                        width: 100%; box-sizing: border-box; background: #000000; border: 3px solid #ff2020;
+                        border-radius: 12px; color: #ffffff; font-size: 17px; padding: 12px 10px;
+                        text-align: center; cursor: pointer; margin-bottom: 14px; letter-spacing: 0.5px;
+                        transition: background 0.15s;
+                    }
+                    #rv4-root .rv3-btn:hover { background: #1a0505; }
+                    /* v4: the check box settings sit directly above each other */
+                    #rv4-root .rv3-checkrow { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }
+                    #rv4-root .rv3-check { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+                    #rv4-root .rv3-box {
+                        width: 26px; height: 26px; border: 3px solid #ff2020; border-radius: 7px;
+                        box-sizing: border-box; position: relative; overflow: hidden; flex-shrink: 0;
+                    }
+                    #rv4-root .rv3-fill {
+                        position: absolute; left: 2px; top: 2px; right: 2px; bottom: 2px;
+                        background: #ff2020; border-radius: 4px;
+                        transform: scale(0); transition: transform 0.16s ease-out;
+                    }
+                    #rv4-root .rv3-check.on .rv3-fill { transform: scale(1); }
+                    #rv4-root .rv3-checklabel { color: #ffffff; font-size: 17px; }
+                    /* v4: AUTO LUNGE - long rounded rectangle above the check boxes */
+                    #rv4-root .rv3-autolunge {
+                        width: 100%; box-sizing: border-box; background: #000000; border: 3px solid #ff2020;
+                        border-radius: 24px; color: #ffffff; font-size: 17px; padding: 12px 10px;
+                        text-align: center; cursor: pointer; margin-bottom: 16px; letter-spacing: 0.5px;
+                        transition: background 0.15s;
+                    }
+                    #rv4-root .rv3-autolunge:hover { background: #1a0505; }
+                    #rv4-root #rv4-kill {
+                        width: 100%; box-sizing: border-box; background: #000000; border: 3px solid #ff2020;
+                        border-radius: 12px; color: #ff2020; font-size: 19px; padding: 13px;
+                        text-align: center; cursor: pointer; letter-spacing: 1.5px; transition: background 0.15s;
+                    }
+                    #rv4-root #rv4-kill:hover { background: #1a0505; }
+                    #rv4-toggle {
+                        position: fixed; left: 110px; top: 21%; width: 75px; height: 75px; background: #000000;
+                        border: 4px solid #ff2020; border-radius: 14px; z-index: 861; cursor: grab;
+                        display: flex; align-items: center; justify-content: center; user-select: none; touch-action: none;
+                    }
+                    #rv4-toggle.dragging { cursor: grabbing; }
+                    #rv4-toggle .rv3-lines { display: flex; flex-direction: column; gap: 6px; }
+                    #rv4-toggle .rv3-lines span { display: block; width: 38px; height: 5px; background: #ffffff; border-radius: 2px; }
+                    #rv4-toggle .rv3-plus { color: #ffffff; font-size: 46px; font-family: 'Inter', Arial, sans-serif; font-weight: 800; display: none; line-height: 1; }
+                    /* v4: TEAM CHECK menu - same color and size as the panel, to its
+                       right with a gap in between */
+                    #rv4-teammenu {
+                        position: fixed; width: 372px; box-sizing: border-box; background: #000000;
+                        border: 4px solid #ff2020; border-radius: 16px; padding: 14px; z-index: 859;
+                        color: #ffffff; user-select: none; display: none;
+                    }
+                    #rv4-teammenu .tm-list { height: 100%; overflow-y: auto; }
+                    #rv4-teammenu .tm-list::-webkit-scrollbar { width: 7px; }
+                    #rv4-teammenu .tm-list::-webkit-scrollbar-thumb { background: #7a0f0f; border-radius: 4px; }
+                    #rv4-teammenu .tm-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+                    #rv4-teammenu .tm-name { color: #ffffff; font-size: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                    #rv4-teammenu .tm-hit {
+                        border: 2px solid #ff2020; border-radius: 9px; color: #ff2020; background: #000000;
+                        font-size: 15px; padding: 6px 13px; cursor: pointer; flex-shrink: 0; letter-spacing: 0.4px;
+                        transition: border-color 0.15s, color 0.15s;
+                    }
+                    #rv4-teammenu .tm-hit:hover { background: #1a0505; }
+                    #rv4-teammenu .tm-hit.safe { border-color: #22dd44; color: #22dd44; }
+                `;
+                document.head.appendChild(style);
+
+                const root = document.createElement('div');
+                root.id = 'rv4-root';
+                root.innerHTML = `
+                    <div class="rv3-row">
+                        <div class="rv3-label">Reach</div>
+                        <input id="rv4-slide-reach" class="rv3-slider" type="range" min="0" max="15" step="0.1" value="3.5">
+                        <div class="rv3-val" id="rv4-val-reach">3.5</div>
+                    </div>
+                    <div class="rv3-row">
+                        <div class="rv3-label">Transparency</div>
+                        <input id="rv4-slide-trans" class="rv3-slider" type="range" min="0" max="1" step="0.01" value="0.75">
+                        <div class="rv3-val" id="rv4-val-trans">0.75</div>
+                    </div>
+                    <div class="rv3-btn" id="rv4-shape">Shape: Line</div>
+                    <div class="rv3-btn" id="rv4-color">Color: Red</div>
+                    <div class="rv3-autolunge" id="rv4-autolunge">Auto Lunge: OFF</div>
+                    <div class="rv3-checkrow">
+                        <div class="rv3-check on" id="rv4-damage"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Damage</div></div>
+                        <div class="rv3-check" id="rv4-viz"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Visualizer</div></div>
+                        <div class="rv3-check" id="rv4-team"><div class="rv3-box"><div class="rv3-fill"></div></div><div class="rv3-checklabel">Team check</div></div>
+                    </div>
+                    <div id="rv4-kill">KILL SCRIPT</div>
+                `;
+                document.body.appendChild(root);
+
+                const toggle = document.createElement('div');
+                toggle.id = 'rv4-toggle';
+                toggle.title = 'REACH V4';
+                toggle.innerHTML = `<div class="rv3-lines"><span></span><span></span><span></span></div><div class="rv3-plus">+</div>`;
+                document.body.appendChild(toggle);
+
+                const slideReach = root.querySelector('#rv4-slide-reach');
+                const valReach = root.querySelector('#rv4-val-reach');
+                const slideTrans = root.querySelector('#rv4-slide-trans');
+                const valTrans = root.querySelector('#rv4-val-trans');
+                const shapeBtn = root.querySelector('#rv4-shape');
+                const colorBtn = root.querySelector('#rv4-color');
+                const dmgCheck = root.querySelector('#rv4-damage');
+                const vizCheck = root.querySelector('#rv4-viz');
+                const teamCheck = root.querySelector('#rv4-team');
+                const killBtn = root.querySelector('#rv4-kill');
+                const autoLungeBtn = root.querySelector('#rv4-autolunge');
+                const RV_SHAPES = ['Line', 'Sphere', 'Box'];
+                const RV_COLORS = ['Red', 'Blue', 'White', 'Green', 'Yellow', 'Purple', 'Orange', 'Rainbow'];
+
+                // Click a value box -> type any value (reach is capped at 15 here)
+                function editableVal(box, current, commit) {
+                    box.innerHTML = '';
+                    const inp = document.createElement('input');
+                    inp.value = String(current);
+                    box.appendChild(inp);
+                    inp.focus(); inp.select();
+                    const done = () => {
+                        if (inp.parentNode !== box) return;   // already committed
+                        const v = parseFloat(inp.value);
+                        box.textContent = '';                 // swap the input out
+                        commit(isNaN(v) ? current : v);
+                    };
+                    inp.addEventListener('keydown', (e) => {
+                        e.stopPropagation();
+                        if (e.key === 'Enter' || e.keyCode === 13) { e.preventDefault(); done(); inp.blur(); }
+                    });
+                    inp.addEventListener('blur', done);
+                }
+
+                slideReach.addEventListener('input', () => {
+                    setReachOptions({ value: Math.min(15, Math.max(0, parseFloat(slideReach.value))) });
+                    syncV4();
+                });
+                valReach.addEventListener('click', () => {
+                    editableVal(valReach, reachState.value, (v) => {
+                        setReachOptions({ value: Math.min(15, Math.max(0, v)) });   // max 15
+                        syncV4();
+                    });
+                });
+                slideTrans.addEventListener('input', () => {
+                    setReachOptions({ vizTransparency: Math.min(1, Math.max(0, parseFloat(slideTrans.value))) });
+                    syncV4();
+                });
+                valTrans.addEventListener('click', () => {
+                    editableVal(valTrans, reachState.vizTransparency, (v) => {
+                        setReachOptions({ vizTransparency: Math.min(1, Math.max(0, v)) });
+                        syncV4();
+                    });
+                });
+                shapeBtn.addEventListener('click', () => {
+                    const idx = RV_SHAPES.indexOf(reachState.shape);
+                    setReachOptions({ shape: RV_SHAPES[(idx + 1) % RV_SHAPES.length] });
+                    syncV4();
+                });
+                colorBtn.addEventListener('click', () => {
+                    const idx = RV_COLORS.indexOf(reachState.vizColor);
+                    setReachOptions({ vizColor: RV_COLORS[(idx + 1) % RV_COLORS.length] });
+                    syncV4();
+                });
+                dmgCheck.addEventListener('click', () => { setReachOptions({ damage: !reachState.damage }); syncV4(); });
+                vizCheck.addEventListener('click', () => { setReachOptions({ visualizer: !reachState.visualizer }); syncV4(); });
+                teamCheck.addEventListener('click', () => {
+                    teamCheck.classList.toggle('on');
+                    applyTeamMenu();
+                });
+                // v4 ONLY FEATURE: AUTO LUNGE - the sword lunges by itself
+                // (drives the engine's built-in autoLungeOn).
+                autoLungeBtn.addEventListener('click', () => {
+                    autoLungeOn = !autoLungeOn;
+                    autoLungeBtn.textContent = 'Auto Lunge: ' + (autoLungeOn ? 'ON' : 'OFF');
+                });
+
+                // ---------------- TEAM CHECK MENU ----------------
+                // Every player + bot in the server with a Hit <-> Safe toggle.
+                // "Safe" = excluded from the extended reach hitbox. The list is
+                // rebuilt every 600ms while shown so joins/leaves update it.
+                let teamMenu = null, teamTimer = null, teamCheckOn = false;
+                function teamRoster() {
+                    const rows = [];
+                    npcs.forEach(n => rows.push(n.displayName || n.name));
+                    remotePlayers.forEach(rp => rows.push(rp.name));
+                    return rows;
+                }
+                function renderTeamMenu() {
+                    if (!teamMenu) return;
+                    const safe = window.reachSafeSet;
+                    const listEl = teamMenu.firstChild;
+                    listEl.innerHTML = '';
+                    teamRoster().forEach(nm => {
+                        const key = String(nm || '').toLowerCase();
+                        const row = document.createElement('div');
+                        row.className = 'tm-row';
+                        const nameEl = document.createElement('div');
+                        nameEl.className = 'tm-name';
+                        nameEl.textContent = nm;
+                        const btn = document.createElement('div');
+                        btn.className = 'tm-hit' + (safe.has(key) ? ' safe' : '');
+                        btn.textContent = safe.has(key) ? 'Safe \u2713' : 'Hit';
+                        btn.addEventListener('click', () => {
+                            if (safe.has(key)) safe.delete(key); else safe.add(key);
+                            renderTeamMenu();
+                        });
+                        row.appendChild(nameEl);
+                        row.appendChild(btn);
+                        listEl.appendChild(row);
+                    });
+                }
+                function applyTeamMenu() {
+                    teamCheckOn = teamCheck.classList.contains('on');
+                    const show = teamCheckOn && uiShown;
+                    if (show) {
+                        if (!teamMenu) {
+                            teamMenu = document.createElement('div');
+                            teamMenu.id = 'rv4-teammenu';
+                            const listEl = document.createElement('div');
+                            listEl.className = 'tm-list';
+                            teamMenu.appendChild(listEl);
+                            document.body.appendChild(teamMenu);
+                        }
+                        // same color + same SIZE as the panel, to its right with a
+                        // small gap in between
+                        const r = root.getBoundingClientRect();
+                        teamMenu.style.left = (r.right + 14) + 'px';
+                        teamMenu.style.top = r.top + 'px';
+                        teamMenu.style.height = r.height + 'px';
+                        teamMenu.style.display = 'block';
+                        renderTeamMenu();
+                        if (!teamTimer) teamTimer = setInterval(renderTeamMenu, 600);
+                    } else {
+                        if (teamMenu) teamMenu.style.display = 'none';
+                        if (teamTimer) { clearInterval(teamTimer); teamTimer = null; }
+                    }
+                }
+
+                function syncV4() {
+                    // value boxes may hold an <input> mid-edit - never stomp it
+                    if (!(valReach.firstChild && valReach.firstChild.tagName === 'INPUT'))
+                        valReach.textContent = String(Math.round(reachState.value * 10) / 10);
+                    if (!(valTrans.firstChild && valTrans.firstChild.tagName === 'INPUT'))
+                        valTrans.textContent = String(Math.round(reachState.vizTransparency * 100) / 100);
+                    slideReach.value = String(Math.min(15, Math.max(0, reachState.value)));
+                    slideTrans.value = String(reachState.vizTransparency);
+                    shapeBtn.textContent = 'Shape: ' + reachState.shape;
+                    colorBtn.textContent = 'Color: ' + reachState.vizColor;
+                    dmgCheck.classList.toggle('on', reachState.damage);
+                    vizCheck.classList.toggle('on', reachState.visualizer);
+                    if (autoLungeBtn) autoLungeBtn.textContent = 'Auto Lunge: ' + (autoLungeOn ? 'ON' : 'OFF');
+                }
+                window.updateReachV4GUI = syncV4;
+
+                // KILL SCRIPT: removes and kills the script, resets the hitbox
+                killBtn.addEventListener('click', () => {
+                    setReachOptions({ active: false, value: 3.5, shape: 'Line', damage: true, visualizer: false, vizTransparency: 0.75, vizColor: 'Red' });
+                    if (window.reachSafeSet) window.reachSafeSet.clear();
+                    autoLungeOn = false;
+                    teamCheckOn = false;
+                    if (teamTimer) { clearInterval(teamTimer); teamTimer = null; }
+                    if (teamMenu) { teamMenu.remove(); teamMenu = null; }
+                    if (reachVizMesh && reachVizMesh.parent) { reachVizMesh.parent.remove(reachVizMesh); reachVizMesh = null; }
+                    window.updateReachV4GUI = null;
+                    if (autoLungeBtn) autoLungeBtn.textContent = 'Auto Lunge: OFF';
+                    root.remove();
+                    toggle.remove();
+                    style.remove();
+                });
+
+                // Toggle button: hide/show the panel (3 lines <-> white +), and
+                // it is movable - a 22px strip always stays grabbable on screen.
+                // The Team check menu follows the panel's visibility.
+                let uiShown = true;
+                const linesEl = toggle.querySelector('.rv3-lines');
+                const plusEl = toggle.querySelector('.rv3-plus');
+                function applyToggleVisual() {
+                    linesEl.style.display = uiShown ? 'flex' : 'none';
+                    plusEl.style.display = uiShown ? 'none' : 'block';
+                    root.style.display = uiShown ? '' : 'none';
+                    if (typeof applyTeamMenu === 'function') applyTeamMenu();
+                }
+                let rvDrag = false, rvDown0 = false, rvSX = 0, rvSY = 0, rvSL = 0, rvST = 0;
+                const startRvDrag = (cx, cy) => {
+                    rvDown0 = true; rvDrag = false; rvSX = cx; rvSY = cy;
+                    const r = toggle.getBoundingClientRect();
+                    rvSL = r.left; rvST = r.top;
+                };
+                const doRvDrag = (cx, cy) => {
+                    if (!rvDown0) return;
+                    const dx = cx - rvSX, dy = cy - rvSY;
+                    if (!rvDrag && Math.sqrt(dx*dx + dy*dy) > 6) { rvDrag = true; toggle.classList.add('dragging'); }
+                    if (rvDrag) {
+                        const keep = 22;
+                        toggle.style.left = Math.max(keep - 75, Math.min(window.innerWidth - keep, rvSL + dx)) + 'px';
+                        toggle.style.top = Math.max(keep - 75, Math.min(window.innerHeight - keep, rvST + dy)) + 'px';
+                    }
+                };
+                const endRvDrag = () => {
+                    if (!rvDown0) return;
+                    if (!rvDrag) { uiShown = !uiShown; applyToggleVisual(); }
+                    rvDown0 = false; rvDrag = false; toggle.classList.remove('dragging');
+                };
+                toggle.addEventListener('mousedown', (e) => { if (e.button !== 0) return; startRvDrag(e.clientX, e.clientY); e.preventDefault(); });
+                window.addEventListener('mousemove', (e) => { if (rvDown0) doRvDrag(e.clientX, e.clientY); });
+                window.addEventListener('mouseup', endRvDrag);
+                toggle.addEventListener('touchstart', (e) => { const t = e.touches[0]; startRvDrag(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
+                window.addEventListener('touchmove', (e) => { if (rvDown0) { const t = e.touches[0]; doRvDrag(t.clientX, t.clientY); } }, { passive: false });
+                window.addEventListener('touchend', endRvDrag);
+
+                syncV4();
+            };
+
+            // ==========================================================
+            // ULTIMATE FLING GUI ("KILASIK'S MULTI-FLING")
+            // loadstring(game:HttpGet("https://scriptblox.com/raw/Universal-Script-Ultimate-Fling-GUI-41909"))()
+            // Dark gray sharp-corner GUI, taller than wide, movable via its top
+            // bar. Darker gray title bar with "KILASIK'S MULTI-FLING" in slightly
+            // light red bold Arial text + a red X kill square. Everything is
+            // Arial; text is bold only where stated. The middle is a gray
+            // scrollable list (light gray scrollbar) of everyone in the server:
+            // slightly lighter gray rows with a light gray check square (space
+            // around it) and the username in white - click a row to put a green
+            // check in the square, click again to remove it. Checked = selected.
+            // Bottom: 4 rectangle buttons in rows of 2 - [START FLING] lime,
+            // [STOP FLING] red (both bold white) on top, [SELECT ALL] /
+            // [DESELECT ALL] gray (white text) below.
+            // START FLING continuously flings the selected players in
+            // ALPHABETICAL order: teleport to the target, follow them ~2.5
+            // studs away while spinning very fast on the x axis, after 1
+            // second fling them in a random direction (a flinged-up victim
+            // rises, loses momentum and falls all the way into the void),
+            // teleport back to the last position, wait 1 second, then the next
+            // target. STOP FLING kills the cycle; START restarts from the
+            // first (alphabetical) target again.
+            // ==========================================================
+            window.initUltimateFling = function() {
+                if (document.getElementById('ufling-gui')) return;   // already loaded
+                window.uflingSelected = window.uflingSelected || new Set();   // lowercase names
+                window.ufling = window.ufling || {
+                    running: false, phase: 'idle', phaseT: 0, idx: -1,
+                    savedPos: new THREE.Vector3(), targetKey: '', offX: 1, offZ: 0
+                };
+                const sel = window.uflingSelected;
+                const st = window.ufling;
+
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    #ufling-gui, #ufling-gui * { font-family: Arial, Helvetica, sans-serif; }
+                    #ufling-gui {
+                        position: fixed; right: 30px; top: 90px; width: 300px; height: 470px;
+                        background: #3a3a3a; border-radius: 0px; z-index: 862;
+                        display: flex; flex-direction: column; user-select: none;
+                        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+                    }
+                    #ufling-titlebar {
+                        height: 42px; background: #2a2a2a; flex-shrink: 0;
+                        display: flex; align-items: center; justify-content: center;
+                        position: relative; cursor: grab; touch-action: none;
+                    }
+                    #ufling-titlebar.dragging { cursor: grabbing; }
+                    #ufling-title { color: #ff7070; font-weight: bold; font-size: 14px; letter-spacing: 0.3px; }
+                    #ufling-close {
+                        position: absolute; right: 7px; top: 7px; width: 28px; height: 28px;
+                        background: #e02020; color: #ffffff; border-radius: 0px;
+                        display: flex; align-items: center; justify-content: center;
+                        font-size: 15px; font-weight: bold; cursor: pointer; line-height: 1;
+                    }
+                    #ufling-close:hover { filter: brightness(1.2); }
+                    #ufling-listwrap { flex: 1; margin: 10px; background: #4a4a4a; display: flex; min-height: 0; }
+                    #ufling-list { flex: 1; overflow-y: auto; padding: 6px; }
+                    #ufling-list::-webkit-scrollbar { width: 10px; }
+                    #ufling-list::-webkit-scrollbar-thumb { background: #cfcfcf; }
+                    #ufling-list::-webkit-scrollbar-track { background: transparent; }
+                    .ufl-row {
+                        height: 34px; background: #5a5a5a; margin-bottom: 8px;
+                        display: flex; align-items: center; cursor: pointer; border-radius: 0px;
+                    }
+                    .ufl-row:hover { filter: brightness(1.1); }
+                    .ufl-box {
+                        width: 18px; height: 18px; background: #cfcfcf; margin: 0 8px 0 10px;
+                        flex-shrink: 0; border-radius: 0px; display: flex; align-items: center;
+                        justify-content: center; font-size: 14px; font-weight: bold; color: #22cc44; line-height: 1;
+                    }
+                    .ufl-name { color: #ffffff; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+                    #ufling-btns { flex-shrink: 0; padding: 10px; display: flex; flex-wrap: wrap; gap: 8px; }
+                    .ufl-btn {
+                        width: calc(50% - 4px); height: 42px; box-sizing: border-box;
+                        display: flex; align-items: center; justify-content: center;
+                        cursor: pointer; border-radius: 0px; font-size: 13px; color: #ffffff;
+                    }
+                    .ufl-btn:active { filter: brightness(1.25); }
+                    #ufling-start { background: #39d353; font-weight: bold; }
+                    #ufling-stop  { background: #e02020; font-weight: bold; }
+                    #ufling-selall { background: #6b6b6b; }
+                    #ufling-deselall { background: #6b6b6b; }
+                `;
+                document.head.appendChild(style);
+
+                const gui = document.createElement('div');
+                gui.id = 'ufling-gui';
+                gui.innerHTML = `
+                    <div id="ufling-titlebar">
+                        <div id="ufling-title">KILASIK'S MULTI-FLING</div>
+                        <div id="ufling-close">X</div>
+                    </div>
+                    <div id="ufling-listwrap"><div id="ufling-list"></div></div>
+                    <div id="ufling-btns">
+                        <div class="ufl-btn" id="ufling-start">START FLING</div>
+                        <div class="ufl-btn" id="ufling-stop">STOP FLING</div>
+                        <div class="ufl-btn" id="ufling-selall">SELECT ALL</div>
+                        <div class="ufl-btn" id="ufling-deselall">DESELECT ALL</div>
+                    </div>
+                `;
+                document.body.appendChild(gui);
+                const listEl = gui.querySelector('#ufling-list');
+
+                // ---- roster (players + bots), live-refreshed for joins/leaves ----
+                function uflPlayers() {
+                    const rows = [];
+                    npcs.forEach(n => rows.push(n.displayName || n.name));
+                    remotePlayers.forEach(rp => rows.push(rp.name));
+                    return rows;
+                }
+                function uflRender() {
+                    listEl.innerHTML = '';
+                    uflPlayers().forEach(nm => {
+                        const key = String(nm || '').toLowerCase();
+                        const row = document.createElement('div');
+                        row.className = 'ufl-row';
+                        const box = document.createElement('div');
+                        box.className = 'ufl-box';
+                        box.textContent = sel.has(key) ? '\u2713' : '';
+                        const nameEl = document.createElement('div');
+                        nameEl.className = 'ufl-name';
+                        nameEl.textContent = nm;
+                        row.appendChild(box);
+                        row.appendChild(nameEl);
+                        row.addEventListener('click', () => {
+                            if (sel.has(key)) sel.delete(key); else sel.add(key);
+                            uflRender();
+                        });
+                        listEl.appendChild(row);
+                    });
+                }
+                uflRender();
+                const uflTimer = setInterval(uflRender, 600);   // list updates on join/leave
+
+                // ---- target resolution: current roster entry by lowercase name ----
+                function uflTarget() {
+                    const key = st.targetKey;
+                    if (!key) return null;
+                    let best = null;
+                    for (let i = 0; i < npcs.length; i++) {
+                        const n = npcs[i];
+                        if (String(n.displayName || n.name).toLowerCase() === key) { best = { kind: 'npc', ref: n }; break; }
+                    }
+                    if (!best) remotePlayers.forEach(rp => {
+                        if (!best && rp.name.toLowerCase() === key) best = { kind: 'remote', ref: rp };
+                    });
+                    return best;
+                }
+
+                // A target is only assaultable when it is present, alive, not
+                // mid-fling (a flung bot rockets across the map - never chase it)
+                // and actually flingable on this client.
+                function uflTargetValid(t) {
+                    if (!t) return false;
+                    if (t.kind === 'npc' && (t.ref.isDead || (t.ref.flingTimer || 0) > 0 || !botsAreLocal())) return false;
+                    if (t.kind === 'remote' && (t.ref.dead || !netJoined)) return false;
+                    return true;
+                }
+
+                // Advance to the next selected target in ALPHABETICAL order.
+                function uflNext() {
+                    const keys = Array.from(sel).sort();
+                    if (keys.length === 0) { st.running = false; st.phase = 'idle'; return; }
+                    st.idx = (st.idx + 1) % keys.length;
+                    st.targetKey = keys[st.idx];
+                    st.phase = 'assault';
+                    st.phaseT = 0;
+                    st.savedPos.copy(playerPos);       // remembered for the return trip
+                    // ~2.5-stud offset toward the attacker's current spot
+                    let dx = 1, dz = 0;
+                    const t = uflTarget();
+                    if (t) {
+                        const feet = npcTargetPosition(t, _uflTmp);
+                        dx = playerPos.x - feet.x; dz = playerPos.z - feet.z;
+                        const l = Math.sqrt(dx * dx + dz * dz) || 1;
+                        dx /= l; dz /= l;
+                    }
+                    st.offX = dx; st.offZ = dz;
+                }
+
+                // ---- per-frame cycle (hooked into iyPreUpdate / iyPostUpdate) ----
+                window.uflingPre = function(dt, now) {
+                    if (!st.running || !isRunning || isRagdoll) return;   // pause while dead
+                    st.phaseT += dt;
+                    if (st.phase === 'assault') {
+                        const t = uflTarget();
+                        if (!uflTargetValid(t)) { uflNext(); return; }   // skip: gone / dead / mid-fling / not flingable
+                        // glued ~2.5 studs from the target, following their movement
+                        moveKeys = { w: false, a: false, s: false, d: false, space: false };
+                        flyDown = false; iyWalkTarget = null;
+                        const feet = npcTargetPosition(t, _uflTmp);
+                        playerPos.set(feet.x + st.offX * 2.5, feet.y + 5.5, feet.z + st.offZ * 2.5);
+                        playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                        if (st.phaseT >= 1.0) {
+                            flingEntityRandom(t.kind, t.ref);      // random direction fling
+                            playerPos.copy(st.savedPos);            // teleport back to the last position
+                            playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                            st.phase = 'wait'; st.phaseT = 0;       // 1s pause before the next target
+                        }
+                    } else if (st.phase === 'wait') {
+                        if (st.phaseT >= 1.0) uflNext();
+                    }
+                };
+                window.uflingPost = function(dt, now) {
+                    if (!st.running || st.phase !== 'assault' || !isRunning || isRagdoll) return;
+                    const t = uflTarget();
+                    if (!uflTargetValid(t)) return;                    // never glue to a bad target
+                    // re-apply the exact assault position after physics + spin very
+                    // fast on the x axis
+                    const feet = npcTargetPosition(t, _uflTmp);
+                    playerPos.set(feet.x + st.offX * 2.5, feet.y + 5.5, feet.z + st.offZ * 2.5);
+                    playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                    charGroup.position.set(playerPos.x, playerPos.y - 5.5, playerPos.z);
+                    charGroup.rotation.x += 45 * dt;
+                };
+
+                // ---- buttons ----
+                gui.querySelector('#ufling-start').addEventListener('click', () => {
+                    st.running = true;
+                    st.phase = 'idle';
+                    st.idx = -1;                 // restart from the FIRST (alphabetical) target
+                    uflNext();
+                });
+                gui.querySelector('#ufling-stop').addEventListener('click', () => {
+                    if (st.phase === 'assault') { playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0); }
+                    st.running = false; st.phase = 'idle';
+                });
+                gui.querySelector('#ufling-selall').addEventListener('click', () => {
+                    uflPlayers().forEach(nm => sel.add(String(nm || '').toLowerCase()));
+                    uflRender();
+                });
+                gui.querySelector('#ufling-deselall').addEventListener('click', () => {
+                    sel.clear();
+                    uflRender();
+                });
+                // X: kills the script (GUI + fling process + hooks)
+                gui.querySelector('#ufling-close').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (st.phase === 'assault') { playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0); }
+                    st.running = false; st.phase = 'idle';
+                    window.uflingPre = null;
+                    window.uflingPost = null;
+                    clearInterval(uflTimer);
+                    sel.clear();
+                    gui.remove();
+                    style.remove();
+                });
+
+                // ---- whole-GUI drag via the top bar (click/tap and drag) ----
+                const bar = gui.querySelector('#ufling-titlebar');
+                let uflDrag = false, uflD = false, uflSX = 0, uflSY = 0, uflSL = 0, uflST = 0;
+                const startUflDrag = (cx, cy) => {
+                    uflD = true; uflDrag = false; uflSX = cx; uflSY = cy;
+                    const r = gui.getBoundingClientRect();
+                    uflSL = r.left; uflST = r.top;
+                    gui.style.right = 'auto';
+                };
+                const doUflDrag = (cx, cy) => {
+                    if (!uflD) return;
+                    const dx = cx - uflSX, dy = cy - uflSY;
+                    if (!uflDrag && Math.sqrt(dx*dx + dy*dy) > 5) { uflDrag = true; bar.classList.add('dragging'); }
+                    if (uflDrag) {
+                        const w = gui.getBoundingClientRect().width, h = gui.getBoundingClientRect().height;
+                        gui.style.left = Math.max(0 - w + 60, Math.min(window.innerWidth - 60, uflSL + dx)) + 'px';
+                        gui.style.top = Math.max(0, Math.min(window.innerHeight - 42, uflST + dy)) + 'px';
+                    }
+                };
+                const endUflDrag = () => {
+                    if (!uflD) return;
+                    uflD = false; uflDrag = false; bar.classList.remove('dragging');
+                };
+                bar.addEventListener('mousedown', (e) => { if (e.target.closest('#ufling-close')) return; startUflDrag(e.clientX, e.clientY); e.preventDefault(); });
+                window.addEventListener('mousemove', (e) => { if (uflD) doUflDrag(e.clientX, e.clientY); });
+                window.addEventListener('mouseup', endUflDrag);
+                bar.addEventListener('touchstart', (e) => { if (e.target.closest('#ufling-close')) return; const t = e.touches[0]; startUflDrag(t.clientX, t.clientY); e.preventDefault(); }, { passive: false });
+                window.addEventListener('touchmove', (e) => { if (uflD) { const t = e.touches[0]; doUflDrag(t.clientX, t.clientY); } }, { passive: false });
+                window.addEventListener('touchend', endUflDrag);
             };
         }
 
@@ -11248,8 +12261,8 @@ ONLY deltaexploits.gg IS REAL!`;
 
         // ===================== REACH SCRIPT (game core) =====================
         // One shared reach state driven by the loadstring GUIs
-        // (pastebin 0dnNLQgG = Reach GUI, pastebin 0dnNLBuK = REACH V3 GUI)
-        // and the IY commands (reach / boxreach).
+        // (pastebin 0dnNLQgG = Reach GUI, pastebin 0dnNLBuK = REACH V3 GUI,
+        // pastebin 0dnNLDkI = REACH V4 GUI) and the IY commands (reach/boxreach).
         // Line: the sword capsule stretched past the blade tip by `value` studs.
         // Sphere / Box: a value x value x value stud region centered on the blade
         // midpoint (reach 10 = a 10x10x10 stud sphere or box).
@@ -11290,6 +12303,7 @@ ONLY deltaexploits.gg IS REAL!`;
             if (reachState.active) rebuildReachViz();
             if (window.updateReachGUI) window.updateReachGUI();
             if (window.updateReachV3GUI) window.updateReachV3GUI();
+            if (window.updateReachV4GUI) window.updateReachV4GUI();
         }
 
         // Distance from the target torso to the NORMAL sword capsule (hilt -> tip).
@@ -11383,6 +12397,11 @@ ONLY deltaexploits.gg IS REAL!`;
             mesh.renderOrder = 997;
             mesh.castShadow = false; mesh.receiveShadow = false;
             mesh.userData.templateSkip = true;   // never cloned into avatar snapshots
+            // v4 TRANSPARENCY FIX: the engine's first-person gear fade walks every
+            // mesh in the sword and forces opacity/transparent on it each frame -
+            // this flag tells it to leave OUR material alone (see the game patch).
+            mesh.userData.keepOpacity = true;
+            mesh.material.userData.keepTransparent = true;
             mesh.visible = false;
             swordModel.add(mesh);
             reachVizMesh = mesh;
@@ -11416,6 +12435,10 @@ ONLY deltaexploits.gg IS REAL!`;
             }
             if (!reachVizMesh && reachState.visualizer && reachState.active) rebuildReachViz();
             if (reachVizMesh) {
+                // v4 TRANSPARENCY FIX (self-heal): re-apply our own opacity every
+                // frame no matter what any other code did to the material.
+                reachVizMesh.material.opacity = 1 - reachState.vizTransparency;
+                reachVizMesh.material.transparent = true;
                 const show = !!(reachState.visualizer && reachState.active && swordModel && swordModel.visible);
                 // Invisible while the camera is inside the shape (it would fill
                 // the whole screen) - reappears the moment the camera leaves.
@@ -11425,6 +12448,71 @@ ONLY deltaexploits.gg IS REAL!`;
                     reachVizMesh.material.color.setHSL(hue, 1, 0.5);
                 }
             }
+        }
+
+        // ===================== TEAM CHECK SAFE LIST (Reach V3 / V4) =====================
+        // window.reachSafeSet holds the lowercase names of every player/bot the
+        // user marked "Safe" in a Team check menu. They are excluded from the
+        // EXTENDED reach hitbox only - normal sword swings still hit them.
+        function isReachSafe(name) {
+            return !!(window.reachSafeSet && window.reachSafeSet.has(String(name || '').toLowerCase()));
+        }
+
+        // ===================== FLING ENGINE (IY 'fling' + Ultimate Fling GUI) =====================
+        // Top-level twin of updateSwordCombat's botsLocal const (that one is
+        // function-scoped): bots are host-authoritative, so bot flings only work
+        // on the host / in solo play.
+        function botsAreLocal() { return !netClientMode(); }
+        // Launches a bot or a remote player in a random direction. Bots get their
+        // own fling physics branch in updateNPC (see the game patch); remote
+        // players receive a 'fling' network message and launch themselves on
+        // their own client - the same symmetric protocol 'dmg' already uses, so
+        // it works both host->client and client->host.
+        // ~30% of flings are mostly UP: the victim rises until they lose
+        // momentum, then falls all the way down to the kill plane (the void).
+        // The rest blast away horizontally and leave the map almost instantly.
+        const _flingDirV = new THREE.Vector3();
+        function flingEntityRandom(kind, ref) {
+            if (kind === 'npc') {
+                if (!ref || ref.isDead || !botsAreLocal()) return false;
+                if ((ref.flingTimer || 0) > 0) return false;
+                _flingDirV.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1);
+                if (_flingDirV.lengthSq() < 0.0001) _flingDirV.set(1, 0, 0);
+                _flingDirV.normalize();
+                const upFirst = Math.random() < 0.3;
+                const vy = upFirst ? (450 + Math.random() * 250) : (120 + Math.random() * 380);
+                const hSpeed = upFirst ? (250 + Math.random() * 500) : (1500 + Math.random() * 1800);
+                ref.flingVel = new THREE.Vector3(_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed);
+                ref.flingTimer = 12;
+                ref.target = null; ref.engageRef = null; ref.threatHeat = 0; ref.tbag = null;
+                ref.horizontalVel.set(0, 0, 0);
+                ref.vel.set(0, 0, 0);
+                return true;
+            }
+            if (kind === 'remote') {
+                if (!ref || ref.dead || !netJoined) return false;
+                if (ref.flingCd && performance.now() < ref.flingCd) return false;
+                _flingDirV.set(Math.random() * 2 - 1, 0, Math.random() * 2 - 1);
+                if (_flingDirV.lengthSq() < 0.0001) _flingDirV.set(1, 0, 0);
+                _flingDirV.normalize();
+                const upFirst = Math.random() < 0.3;
+                const vy = upFirst ? (450 + Math.random() * 250) : (120 + Math.random() * 380);
+                const hSpeed = upFirst ? (250 + Math.random() * 500) : (1500 + Math.random() * 1800);
+                ref.flingCd = performance.now() + 5000;
+                broadcast({ t: 'fling', target: ref.id, v: [_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed] });
+                return true;
+            }
+            return false;
+        }
+
+        // Receiving end of the 'fling' network message: THIS client's own player
+        // is the victim. Launch them; iyPreUpdate keeps the horizontal momentum
+        // alive until they land, and the normal kill-plane void death does the rest.
+        function receiveRemoteFling(d) {
+            if (isRagdoll || !isRunning || !d || !d.v) return;
+            window.playerFling = { hvel: new THREE.Vector3(d.v[0], 0, d.v[2]), timer: 12, elapsed: 0 };
+            playerVel.y = d.v[1];
+            isGrounded = false;
         }
 
         // ===================== GOTO / TGOTO TARGET RESOLVER =====================
@@ -11760,6 +12848,7 @@ ONLY deltaexploits.gg IS REAL!`;
             n.group.position.set(pad.x, pad.y - 5.5, pad.z);
             n.vel.set(0, 0, 0); n.horizontalVel.set(0, 0, 0);
             n.health = 100; n.isDead = false; n.voidDeath = false; n.group.visible = true;
+            n.flingTimer = 0;   // v4 FLING: respawn clears any leftover fling state
             n.state = 'FOLLOW'; n.stateTimer = 0; n.attackTimer = 0; n.retreatTimer = 0;
             n.strafeDir = Math.random() > 0.5 ? 1 : -1; n.lungeTimer = 0;
             n.leftLeg.rotation.set(0,0,0); n.rightLeg.rotation.set(0,0,0);
@@ -12407,6 +13496,21 @@ ONLY deltaexploits.gg IS REAL!`;
             // Fell off the map into the void: after ~40 studs of falling the bot
             // dies instantly and disappears (no ragdoll).
             if (n.pos.y < KILL_PLANE_Y) { triggerNPCVoidDeath(n); return; }
+
+            // v4 FLING (cheat system): a flung bot skips ALL normal AI and
+            // physics - it just rockets along flingVel with gravity, spinning,
+            // ignoring floors/walls/the edge guard, until the timer runs out or
+            // it crosses the kill plane into the void (flung up = rise, lose
+            // momentum, then fall all the way down).
+            if (n.flingTimer > 0) {
+                n.flingTimer -= dt;
+                n.flingVel.y -= 196.2 * dt;
+                n.pos.addScaledVector(n.flingVel, dt);
+                n.group.position.set(n.pos.x, n.pos.y - 5.5, n.pos.z);
+                n.group.rotation.y += 25 * dt;
+                if (n.pos.y < KILL_PLANE_Y) { triggerNPCVoidDeath(n); return; }
+                return;
+            }
             
             n.group.updateMatrixWorld(true); 
 
