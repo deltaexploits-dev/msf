@@ -2830,7 +2830,7 @@
                         if (e.key === 'Enter') {
                             e.preventDefault();
                             if (document.getElementById('leave-confirmation-panel').style.display === 'flex') {
-                                window.location.href = "https://roblox-devt.github.io/home2/";
+                                window.location.href = "https://deltaexploits-dev.github.io/home2/";
                             } else if (document.getElementById('respawn-confirmation-panel').style.display === 'flex') {
                                 executeRagdollRespawn();
                             }
@@ -4294,7 +4294,7 @@
                 document.getElementById('leave-confirmation-panel').style.display = 'none';
                 document.getElementById('pause-menu').classList.add('open');
             });
-            document.getElementById('confirm-leave-yes').addEventListener('click', () => window.location.href = "https://roblox-devt.github.io/home2/");
+            document.getElementById('confirm-leave-yes').addEventListener('click', () => window.location.href = "https://deltaexploits-dev.github.io/home2/");
 
             document.getElementById('confirm-respawn-no').addEventListener('click', () => {
                 document.getElementById('respawn-confirmation-panel').style.display = 'none';
@@ -9763,7 +9763,7 @@ ONLY deltaexploits.gg IS REAL!`;
             let iyFlySpeed = 1;
             // v4 command state: spin / fling / orbit / headsit + scratch vectors
             let iySpinRate = 0, iySpinAngle = 0;
-            let iyFlingOn = false, iyFlingAngle = 0;
+            let iyFlingOn = false, iyFlingAngle = 0, iyFlingSaveYaw = 0;
             let iyOrbit = null;
             let iyHeadsit = null;
             const _otmp = new THREE.Vector3();
@@ -9843,7 +9843,12 @@ ONLY deltaexploits.gg IS REAL!`;
                     if (base === 'noclip' || cmd === 'clip') { iyNoclip = false; window.iyNoclip = false; }
                     if (base === 'walltp') { iyWallTP = false; iyPrint('Wall teleport disabled.'); }
                     if (base === 'spin') { iySpinRate = 0; }
-                    if (base === 'fling') { iyFlingOn = false; }
+                    if (base === 'fling') {
+                        // unfling: after the fling the player's rotation is set
+                        // back to normal (the facing they had before the spin)
+                        if (iyFlingOn && charGroup) charGroup.rotation.y = iyFlingSaveYaw;
+                        iyFlingOn = false;
+                    }
                     if (base === 'orbit') { iyOrbit = null; }
                     if (base === 'headsit') { iyHeadsit = null; }
                     return;
@@ -10085,6 +10090,7 @@ ONLY deltaexploits.gg IS REAL!`;
                 if (cmd === 'fling') {
                     iyFlingOn = true;
                     iyFlingAngle = charGroup.rotation.y;
+                    iyFlingSaveYaw = charGroup.rotation.y;   // unfling restores it
                 }
                 // orbit [player] [studs] [speed]: circle the target. Defaults: 5
                 // studs away, 1 speed ("orbit astralium 5 5" = 5 studs at speed 5).
@@ -11639,7 +11645,9 @@ ONLY deltaexploits.gg IS REAL!`;
             // second fling them in a random direction (a flinged-up victim
             // rises, loses momentum and falls all the way into the void),
             // teleport back to the last position, wait 1 second, then the next
-            // target. STOP FLING kills the cycle; START restarts from the
+            // target. After each fling the player's rotation is set back to
+            // normal (upright, facing the way they faced before the spin).
+            // STOP FLING kills the cycle; START restarts from the
             // first (alphabetical) target again.
             // ==========================================================
             window.initUltimateFling = function() {
@@ -11647,7 +11655,7 @@ ONLY deltaexploits.gg IS REAL!`;
                 window.uflingSelected = window.uflingSelected || new Set();   // lowercase names
                 window.ufling = window.ufling || {
                     running: false, phase: 'idle', phaseT: 0, idx: -1,
-                    savedPos: new THREE.Vector3(), targetKey: '', offX: 1, offZ: 0
+                    savedPos: new THREE.Vector3(), savedYaw: 0, targetKey: '', offX: 1, offZ: 0
                 };
                 const sel = window.uflingSelected;
                 const st = window.ufling;
@@ -11779,6 +11787,17 @@ ONLY deltaexploits.gg IS REAL!`;
                     return true;
                 }
 
+                // After the player flings someone their rotation is set back
+                // to normal: upright again (x/z zeroed, YXZ order) and facing
+                // the direction they faced before the assault spin started.
+                function uflResetPose() {
+                    if (!charGroup) return;
+                    charGroup.rotation.order = 'YXZ';
+                    charGroup.rotation.x = 0;
+                    charGroup.rotation.z = 0;
+                    charGroup.rotation.y = st.savedYaw || 0;
+                }
+
                 // Advance to the next selected target in ALPHABETICAL order.
                 function uflNext() {
                     const keys = Array.from(sel).sort();
@@ -11788,6 +11807,7 @@ ONLY deltaexploits.gg IS REAL!`;
                     st.phase = 'assault';
                     st.phaseT = 0;
                     st.savedPos.copy(playerPos);       // remembered for the return trip
+                    st.savedYaw = charGroup ? charGroup.rotation.y : 0;   // rotation restored after the fling
                     // ~2.5-stud offset toward the attacker's current spot
                     let dx = 1, dz = 0;
                     const t = uflTarget();
@@ -11817,6 +11837,7 @@ ONLY deltaexploits.gg IS REAL!`;
                             flingEntityRandom(t.kind, t.ref);      // random direction fling
                             playerPos.copy(st.savedPos);            // teleport back to the last position
                             playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                            uflResetPose();                          // flung them -> rotation back to normal
                             st.phase = 'wait'; st.phaseT = 0;       // 1s pause before the next target
                         }
                     } else if (st.phase === 'wait') {
@@ -11844,7 +11865,10 @@ ONLY deltaexploits.gg IS REAL!`;
                     uflNext();
                 });
                 gui.querySelector('#ufling-stop').addEventListener('click', () => {
-                    if (st.phase === 'assault') { playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0); }
+                    if (st.phase === 'assault') {
+                        playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                        uflResetPose();   // stopped mid-fling -> rotation back to normal too
+                    }
                     st.running = false; st.phase = 'idle';
                 });
                 gui.querySelector('#ufling-selall').addEventListener('click', () => {
@@ -11858,7 +11882,10 @@ ONLY deltaexploits.gg IS REAL!`;
                 // X: kills the script (GUI + fling process + hooks)
                 gui.querySelector('#ufling-close').addEventListener('click', (e) => {
                     e.stopPropagation();
-                    if (st.phase === 'assault') { playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0); }
+                    if (st.phase === 'assault') {
+                        playerPos.copy(st.savedPos); playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                        uflResetPose();   // killed mid-fling -> rotation back to normal too
+                    }
                     st.running = false; st.phase = 'idle';
                     window.uflingPre = null;
                     window.uflingPost = null;
@@ -13945,7 +13972,7 @@ ONLY deltaexploits.gg IS REAL!`;
 
         async function loadAvatarFromCloud(userId = 'default_user') {
             try {
-                const response = await fetch(`https://roblox-devt.github.io/home/get-avatar?userId=${userId}`);
+                const response = await fetch(`https://deltaexploits-dev.github.io/home/get-avatar?userId=${userId}`);
                 if (!response.ok) throw new Error('Could not fetch avatar');
                 const data = await response.json();
                 return data.avatarState;
