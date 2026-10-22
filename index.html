@@ -2830,7 +2830,7 @@
                         if (e.key === 'Enter') {
                             e.preventDefault();
                             if (document.getElementById('leave-confirmation-panel').style.display === 'flex') {
-                                window.location.href = "https://deltaexploits-dev.github.io/home2/";
+                                window.location.href = "https://roblox-devt.github.io/home2/";
                             } else if (document.getElementById('respawn-confirmation-panel').style.display === 'flex') {
                                 executeRagdollRespawn();
                             }
@@ -4294,7 +4294,7 @@
                 document.getElementById('leave-confirmation-panel').style.display = 'none';
                 document.getElementById('pause-menu').classList.add('open');
             });
-            document.getElementById('confirm-leave-yes').addEventListener('click', () => window.location.href = "https://deltaexploits-dev.github.io/home2/");
+            document.getElementById('confirm-leave-yes').addEventListener('click', () => window.location.href = "https://roblox-devt.github.io/home2/");
 
             document.getElementById('confirm-respawn-no').addEventListener('click', () => {
                 document.getElementById('respawn-confirmation-panel').style.display = 'none';
@@ -9740,6 +9740,12 @@ ONLY deltaexploits.gg IS REAL!`;
                         <div>orbit [player] [studs] [speed]</div>
                         <div>unorbit</div>
                         <div>headsit [player]</div>
+                        <div>esp</div>
+                        <div>noesp / unesp</div>
+                        <div>cbring [player|all|others] [studs]</div>
+                        <div>uncbring [player|all]</div>
+                        <div>loopbring [player|all|others] [studs]</div>
+                        <div>unloopbring [player|all]</div>
                     </div>
                 </div>
             `;
@@ -9768,6 +9774,14 @@ ONLY deltaexploits.gg IS REAL!`;
             let iyHeadsit = null;
             const _otmp = new THREE.Vector3();
             const _uflTmp = new THREE.Vector3();
+            // v5: ESP hitbox boxes + client-side bring state + scratch objects
+            let iyEsp = { on: false, m: new Map() };
+            let iyBring = new Map();
+            const _espP = new THREE.Vector3();
+            const _espQ = new THREE.Quaternion();
+            const _espC = new THREE.Vector3();
+            const _espBox3 = new THREE.Box3();
+            const _espSize = new THREE.Vector3();
 
             // Tweening State Variables
             let isTweening = false;
@@ -9851,6 +9865,11 @@ ONLY deltaexploits.gg IS REAL!`;
                     }
                     if (base === 'orbit') { iyOrbit = null; }
                     if (base === 'headsit') { iyHeadsit = null; }
+                    // v5: noesp/unesp removes the hitbox boxes; uncbring /
+                    // unloopbring drop the client-side brings again (no arg = all).
+                    if (base === 'esp') { _iyEspClear(); }
+                    if (base === 'cbring') { _iyBringClear(false, arg); }
+                    if (base === 'loopbring') { _iyBringClear(true, arg); }
                     return;
                 }
 
@@ -10121,6 +10140,41 @@ ONLY deltaexploits.gg IS REAL!`;
                     const target = resolveGotoTarget(parts.slice(1).join(' '));
                     if (target) iyHeadsit = { target: target };
                 }
+
+                // ===================== v5 COMMANDS =====================
+                // esp: transparent white hitbox boxes on every bot + player,
+                // visible through walls. Sharp boxes (no beveling). The head
+                // hitbox is a 2 wide / 1 thick / 1.2 tall box; while a tool is
+                // held its hitbox is drawn too - with no tool only the
+                // character model hitboxes show. noesp / unesp undoes it.
+                if (cmd === 'esp') { iyEsp.on = true; }
+                // cbring/loopbring [target] [studs]: snap a bot/player in front
+                // of you on YOUR client only - their own screen shows no
+                // difference, and the moment they move they return to their real
+                // position on yours. loopbring does the same but keeps re-bringing
+                // + updates the spot constantly. An optional trailing number is
+                // the bring distance in studs ("loopbring DivineFlame 5" = glued
+                // 5 studs away, default 1). 'all'/'others' = everyone except you
+                // (you cannot bring yourself anyway).
+                if (cmd === 'cbring' || cmd === 'loopbring') {
+                    const loop = (cmd === 'loopbring');
+                    const nums = [];
+                    const nameParts = [];
+                    for (let i = 1; i < parts.length; i++) {
+                        if (parts[i] !== '' && !isNaN(parseFloat(parts[i]))) nums.push(parseFloat(parts[i]));
+                        else if (nums.length === 0) nameParts.push(parts[i]);
+                    }
+                    const dist = (nums.length > 0 && nums[0] > 0) ? nums[0] : 1;
+                    _iyBringTargets(nameParts.join(' ')).forEach(t => {
+                        if (!t || t.kind === 'player') return;   // cannot bring yourself
+                        iyBring.set(t.ref, {
+                            kind: t.kind,
+                            loop: loop,
+                            dist: dist,
+                            base: t.kind === 'remote' ? t.ref.tpos.clone() : t.ref.pos.clone()
+                        });
+                    });
+                }
             };
 
             // Contact scan for the 'fling' command: anyone within ~3 studs of the
@@ -10146,6 +10200,222 @@ ONLY deltaexploits.gg IS REAL!`;
                     });
                 }
             }
+
+            // ===================== v5: ESP HITBOXES =====================
+            // One sharp transparent white box per hitbox part (no beveling),
+            // depthTest off so they are visible through walls.
+            function _iyEspBox(w, h, d) {
+                const mesh = new THREE.Mesh(
+                    new THREE.BoxGeometry(w, h, d),
+                    new THREE.MeshBasicMaterial({
+                        color: 0xffffff, transparent: true, opacity: 0.3,
+                        depthTest: false, depthWrite: false, side: THREE.DoubleSide
+                    })
+                );
+                mesh.renderOrder = 950;
+                mesh.castShadow = false; mesh.receiveShadow = false;
+                scene.add(mesh);
+                return mesh;
+            }
+            // [part, width, height, depth] per target kind. The HEAD hitbox is
+            // the requested 2 x 1.2 x 1 (wide x tall x thick) box; the rest wrap
+            // the actual character parts. FIX: the limb geometry hangs a full
+            // stud BELOW its mesh's origin (limbGeo is translated -1 inside the
+            // mesh), so a box centered on the mesh position sat a stud too high -
+            // _iyEspLocalCenter caches each part's real geometry-bbox center.
+            function _iyEspLocalCenter(part) {
+                if (!part || !part.geometry) return new THREE.Vector3();
+                try {
+                    if (!part.geometry.boundingBox) part.geometry.computeBoundingBox();
+                    return part.geometry.boundingBox.getCenter(new THREE.Vector3());
+                } catch (e) { return new THREE.Vector3(); }
+            }
+            function _iyEspEntry(kind, ref) {
+                const partDefs = kind === 'npc' ? [
+                    [ref.head, 2, 1.2, 1], [ref.torso, 2, 2, 1],
+                    [ref.leftArmMesh, 1, 2, 1], [ref.rightArmMesh, 1, 2, 1],
+                    [ref.leftLegMesh, 1, 2, 1], [ref.rightLegMesh, 1, 2, 1]
+                ] : [
+                    [ref.head, 2, 1.2, 1], [ref.torso, 2, 2, 1],
+                    [(ref.lArm.children && ref.lArm.children[0]) || ref.lArm, 1, 2, 1],
+                    [(ref.rArm.children && ref.rArm.children[0]) || ref.rArm, 1, 2, 1],
+                    [(ref.lLeg.children && ref.lLeg.children[0]) || ref.lLeg, 1, 2, 1],
+                    [(ref.rLeg.children && ref.rLeg.children[0]) || ref.rLeg, 1, 2, 1]
+                ];
+                return {
+                    kind: kind, ref: ref,
+                    parts: partDefs.map(def => ({
+                        part: def[0],
+                        mesh: _iyEspBox(def[1], def[2], def[3]),
+                        center: _iyEspLocalCenter(def[0])
+                    })),
+                    sword: ref.sword || null,
+                    swordBox: _iyEspBox(1, 1, 1),
+                    label: _iyEspMakeLabel()
+                };
+            }
+            // Overhead info label per boxed target: "username | Health:N | Studs:N"
+            // in white bold text with a black outline. A camera-facing sprite with
+            // depthTest off - readable through walls, just like the boxes.
+            function _iyEspMakeLabel() {
+                const cv = document.createElement('canvas');
+                cv.width = 1024; cv.height = 96;
+                const tex = new THREE.CanvasTexture(cv);
+                tex.colorSpace = THREE.SRGBColorSpace;
+                const sp = new THREE.Sprite(new THREE.SpriteMaterial({
+                    map: tex, transparent: true, depthTest: false, depthWrite: false
+                }));
+                sp.scale.set(15, 96 / 1024 * 15, 1);
+                sp.renderOrder = 951;                 // above the hitbox boxes
+                scene.add(sp);
+                return { sprite: sp, cv: cv, ctx: cv.getContext('2d'), tex: tex, text: null };
+            }
+            function _iyEspDrawLabel(l, text) {
+                if (l.text === text) return;          // unchanged -> no redraw
+                l.text = text;
+                const x = l.ctx;
+                x.clearRect(0, 0, l.cv.width, l.cv.height);
+                let fs = 46;                          // shrink long names so
+                x.font = 'bold ' + fs + 'px Arial';   // they never overflow
+                while (fs > 22 && x.measureText(text).width > l.cv.width - 48) {
+                    fs -= 2; x.font = 'bold ' + fs + 'px Arial';
+                }
+                x.textAlign = 'center'; x.textBaseline = 'middle';
+                x.lineWidth = 8; x.strokeStyle = 'rgba(0,0,0,0.9)';
+                x.strokeText(text, l.cv.width / 2, l.cv.height / 2);
+                x.fillStyle = '#ffffff';
+                x.fillText(text, l.cv.width / 2, l.cv.height / 2);
+                l.tex.needsUpdate = true;
+            }
+            function _iyEspDispose(e) {
+                e.parts.forEach(pb => { scene.remove(pb.mesh); pb.mesh.geometry.dispose(); pb.mesh.material.dispose(); });
+                scene.remove(e.swordBox); e.swordBox.geometry.dispose(); e.swordBox.material.dispose();
+                scene.remove(e.label.sprite); e.label.tex.dispose(); e.label.sprite.material.dispose();
+            }
+            function _iyEspClear() {
+                iyEsp.on = false;
+                iyEsp.m.forEach(e => _iyEspDispose(e));
+                iyEsp.m.clear();
+            }
+            // Per-frame: create boxes for new joiners, follow every part,
+            // dispose boxes of leavers. Runs after the bot/remote updates so the
+            // boxes sit on the final rendered pose (brought targets included).
+            function _iyEspSync() {
+                if (!iyEsp.on) return;
+                const seen = new Set();
+                const ensure = (kind, ref) => {
+                    seen.add(ref);
+                    let e = iyEsp.m.get(ref);
+                    if (!e) { e = _iyEspEntry(kind, ref); iyEsp.m.set(ref, e); }
+                    const vis = kind === 'npc' ? (!ref.isDead && ref.group.visible) : (!ref.dead && !ref.st.d && ref.group.visible);
+                    e.parts.forEach(pb => {
+                        pb.part.getWorldPosition(_espP);
+                        pb.part.getWorldQuaternion(_espQ);
+                        _espP.add(_espC.copy(pb.center).applyQuaternion(_espQ));   // real part center
+                        pb.mesh.position.copy(_espP);
+                        pb.mesh.quaternion.copy(_espQ);
+                        pb.mesh.visible = vis;
+                    });
+                    // Tool hitbox: only while a tool is actually held - no tool,
+                    // only the character model hitboxes are shown.
+                    const showSword = vis && e.sword && e.sword.visible;
+                    e.swordBox.visible = !!showSword;
+                    if (showSword) {
+                        _espBox3.setFromObject(e.sword);
+                        _espBox3.getSize(_espSize);
+                        _espBox3.getCenter(_espP);
+                        e.swordBox.scale.set(Math.max(_espSize.x, 0.05), Math.max(_espSize.y, 0.05), Math.max(_espSize.z, 0.05));
+                        e.swordBox.position.copy(_espP);
+                        e.swordBox.quaternion.identity();
+                    }
+                    // Overhead info label: username | Health:N | Studs:N - the
+                    // health updates with damage/death and the studs update as
+                    // they move closer/further (redraw only when the text changes).
+                    e.label.sprite.visible = vis;
+                    if (vis) {
+                        const hp = e.parts[0].mesh.position;
+                        e.label.sprite.position.set(hp.x, hp.y + 3.0, hp.z);
+                        const nm = kind === 'npc'
+                            ? String(ref.username || ref.displayName || ref.name || 'Bot')
+                            : String(ref.username || ref.name || 'Player');
+                        const health = kind === 'npc'
+                            ? (typeof ref.health === 'number' ? ref.health : 100)
+                            : (ref.st && typeof ref.st.hp === 'number' ? ref.st.hp : 100);
+                        const studs = charGroup ? charGroup.position.distanceTo(ref.group.position) : 0;
+                        _iyEspDrawLabel(e.label, nm + ' | Health:' + Math.max(0, Math.round(health)) + ' | Studs:' + Math.max(0, Math.round(studs)));
+                    }
+                };
+                npcs.forEach(n => ensure('npc', n));
+                remotePlayers.forEach(rp => ensure('remote', rp));
+                iyEsp.m.forEach((e, ref) => { if (!seen.has(ref)) { _iyEspDispose(e); iyEsp.m.delete(ref); } });
+            }
+
+            // ===================== v5: CBRING / LOOPBRING =====================
+            // 'all' / 'others' (or no argument) = every bot + remote player -
+            // the executor is never included (you cannot bring yourself).
+            function _iyBringTargets(argStr) {
+                const a = (argStr || '').trim().toLowerCase();
+                const list = [];
+                if (a === '' || a === 'all' || a === 'others') {
+                    npcs.forEach(n => list.push({ kind: 'npc', ref: n }));
+                    remotePlayers.forEach(rp => list.push({ kind: 'remote', ref: rp }));
+                } else {
+                    const t = resolveGotoTarget(argStr);
+                    if (t) list.push(t);
+                }
+                return list;
+            }
+            function _iyBringName(e, ref) {
+                if (e.kind === 'npc') return String(ref.displayName || ref.name || '').toLowerCase();
+                return String(ref.name || '').toLowerCase();
+            }
+            // uncbring / unloopbring: drop the brings again (no arg = all).
+            function _iyBringClear(loop, arg) {
+                // a trailing distance ("unloopbring DivineFlame 5") is ignored -
+                // matching happens by name / all / others only
+                const a = (arg || '').trim().toLowerCase().replace(/\s+\d+(\.\d+)?\s*$/, '');
+                iyBring.forEach((e, ref) => {
+                    if (e.loop !== loop) return;
+                    if (a === '' || a === 'all' || a === 'others' || _iyBringName(e, ref) === a) iyBring.delete(ref);
+                });
+            }
+            // Per-frame enforcement. Runs AFTER updateNPC/updateRemotePlayers and
+            // BEFORE the render + the next sword check, so brought targets are
+            // rendered + swordable at the brought spot while their true state
+            // (n.pos / rp.tpos) is never touched: their own screen and every
+            // other client see no difference at all.
+            function _iyBringSync() {
+                if (iyBring.size === 0 || !isRunning || isRagdoll || !charGroup) return;
+                // the bring spot: each entry's own distance in front of the
+                // player (feet space; "loopbring name 5" = 5 studs, default 1)
+                const yaw = charGroup.rotation.y;
+                const fy = charGroup.position.y;
+                iyBring.forEach((e, ref) => {
+                    const d = (typeof e.dist === 'number' && e.dist > 0) ? e.dist : 1;
+                    const fx = charGroup.position.x - Math.sin(yaw) * d;
+                    const fz = charGroup.position.z - Math.cos(yaw) * d;
+                    if (e.kind === 'npc') {
+                        if (npcs.indexOf(ref) === -1 || ref.isDead) { if (!e.loop) iyBring.delete(ref); return; }
+                        // moved on their own? one-shot bring ends - back to normal
+                        if (!e.loop && e.base.distanceTo(ref.pos) > 0.05) { iyBring.delete(ref); return; }
+                        ref.group.position.set(fx, fy, fz);   // render + combat only
+                    } else {
+                        if (!remotePlayers.has(ref.id) || ref.dead || ref.st.d) { if (!e.loop) iyBring.delete(ref); return; }
+                        if (!e.loop && e.base.distanceTo(ref.tpos) > 0.05) { iyBring.delete(ref); return; }
+                        ref.pos.set(fx, fy, fz);              // client-side only - the
+                        ref.group.position.set(fx, fy, fz);   // network truth (tpos) is
+                    }                                         // never touched
+                });
+            }
+            // the per-frame visuals hook - updateHitboxViz calls this AFTER the
+            // bot updates and BEFORE the render
+            window.iyVisualSync = function() {
+                _iyBringSync();
+                _iyEspSync();
+            };
+            // debug/inspection handles (same convention as window.ufling)
+            window.iyEspState = iyEsp;
+            window.iyBringState = iyBring;
 
             window.iyPreUpdate = function(dt, now) {
                 if (document.activeElement && (
@@ -12598,6 +12868,7 @@ ONLY deltaexploits.gg IS REAL!`;
         }
         function updateHitboxViz() {
             updateReachViz();
+            if (window.iyVisualSync) window.iyVisualSync();
             if (swordModel) {
                 if (showHitboxes && swordModel.visible) ensureHitboxViz(swordModel);
                 if (swordModel.userData.hitboxViz) swordModel.userData.hitboxViz.visible = showHitboxes && swordModel.visible;
@@ -13972,7 +14243,7 @@ ONLY deltaexploits.gg IS REAL!`;
 
         async function loadAvatarFromCloud(userId = 'default_user') {
             try {
-                const response = await fetch(`https://deltaexploits-dev.github.io/home/get-avatar?userId=${userId}`);
+                const response = await fetch(`https://roblox-devt.github.io/home/get-avatar?userId=${userId}`);
                 if (!response.ok) throw new Error('Could not fetch avatar');
                 const data = await response.json();
                 return data.avatarState;
