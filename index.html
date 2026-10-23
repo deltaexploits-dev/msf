@@ -6939,20 +6939,41 @@
                         aimArm.rotation.x = -Math.PI / 2;
                         if (n.sword) n.sword.rotation.set(0, 0, Math.PI);
                     }
-                } else {
+                } else if (n.sword && n.sword.visible) {
+                    // v6: only a DRAWN sword pins the aim arm up (see the
+                    // local bot update).
                     aimArm.rotation.x = -Math.PI / 2;
                     if (n.sword) n.sword.rotation.set(-Math.PI / 2, 0, Math.PI);
                 }
                 // Walk animation (identical to the local bot update)
+                // v6 WALK ANIMATION: the player walk cycle, verbatim (see the
+                // local bot update) - clients see the exact same walk.
                 if (n.horizontalVel.length() > 0.1) {
-                    n.animTimer += dt * 14; const sw = Math.sin(n.animTimer);
-                    n.leftArm.rotation.x = -sw * 0.78;
-                    n.rightLeg.rotation.x = -sw * 0.78;
-                    n.leftLeg.rotation.x = sw * 0.78;
+                    n.animTimer += dt * 11 * (Math.min(n.horizontalVel.length(), 32) / 16);
+                    const sw = Math.sin(n.animTimer);
+                    const legMid = 12.5 * (Math.PI / 180), legAmp = 42.5 * (Math.PI / 180);
+                    const armMid = -7.5 * (Math.PI / 180), armAmp = 42.5 * (Math.PI / 180);
+                    n.leftLeg.rotation.x = legMid + sw * legAmp;
+                    n.rightLeg.rotation.x = legMid - sw * legAmp;
+                    n.leftArm.rotation.x = armMid - sw * armAmp;
+                    if (!n.sword || !n.sword.visible) n.rightArm.rotation.x = armMid + sw * armAmp;
+                    n.leftArm.rotation.z = 3 * (Math.PI / 180);
+                    n.rightArm.rotation.z = -3 * (Math.PI / 180);
+                    n.leftArm.position.y = 3.5 - sw * 0.03;
+                    n.rightArm.position.y = 3.5 + sw * 0.03;
+                    n.torso.rotation.y = -sw * (2 * Math.PI / 180);
+                    n.head.rotation.y = -sw * (2 * Math.PI / 180);
                 } else {
                     n.leftArm.rotation.x *= 0.85;
+                    if (!n.sword || !n.sword.visible) n.rightArm.rotation.x *= 0.85;
                     n.leftLeg.rotation.x *= 0.85;
                     n.rightLeg.rotation.x *= 0.85;
+                    n.leftArm.rotation.z = THREE.MathUtils.lerp(n.leftArm.rotation.z, 0, 0.2);
+                    n.rightArm.rotation.z = THREE.MathUtils.lerp(n.rightArm.rotation.z, 0, 0.2);
+                    n.leftArm.position.y = THREE.MathUtils.lerp(n.leftArm.position.y, 3.5, 0.2);
+                    n.rightArm.position.y = THREE.MathUtils.lerp(n.rightArm.position.y, 3.5, 0.2);
+                    n.torso.rotation.y = THREE.MathUtils.lerp(n.torso.rotation.y, 0, 0.2);
+                    n.head.rotation.y = THREE.MathUtils.lerp(n.head.rotation.y, 0, 0.2);
                 }
                 updateNPCHealthBar(n);
             }
@@ -8134,10 +8155,14 @@
                     ).normalize();
                     
                     let finalMove = new THREE.Vector3();
-                    if (d.z < 0) finalMove.add(lookDir);
-                    if (d.z > 0) finalMove.sub(lookDir);
-                    if (d.x < 0) finalMove.sub(right);
-                    if (d.x > 0) finalMove.add(right);
+                    // v6 FLY FIX (mobile joystick): weight the camera axes by
+                    // the ACTUAL analog joystick components instead of just
+                    // their signs, so the player flies exactly where the
+                    // joystick points - a 20-degree push moves 20 degrees off
+                    // forward, not the old forced 45-degree diagonal. WASD
+                    // (binary -1/0/1) is unchanged.
+                    finalMove.addScaledVector(lookDir, -d.z);
+                    finalMove.addScaledVector(right, d.x);
                     
                     let verticalMove = 0;
                     if (moveKeys.space) verticalMove += 1;
@@ -10192,7 +10217,7 @@ ONLY deltaexploits.gg IS REAL!`;
                 }
                 if (netJoined) {
                     remotePlayers.forEach(rp => {
-                        if (rp.dead) return;
+                        if (rp.dead || rp.vFling) return;   // v6: never re-fling a victim that is still visibly flying
                         if (rp.flingCd && performance.now() < rp.flingCd) return;
                         const dx = rp.pos.x - playerPos.x, dz = rp.pos.z - playerPos.z;
                         const dy = rp.pos.y - (playerPos.y - 5.5);
@@ -10401,6 +10426,10 @@ ONLY deltaexploits.gg IS REAL!`;
                         ref.group.position.set(fx, fy, fz);   // render + combat only
                     } else {
                         if (!remotePlayers.has(ref.id) || ref.dead || ref.st.d) { if (!e.loop) iyBring.delete(ref); return; }
+                        // v6: a victim mid-fling is never re-glued - they are
+                        // rocketing across the map (one-shot brings end, loops
+                        // resume when the flight is over)
+                        if (ref.vFling) { if (!e.loop) iyBring.delete(ref); return; }
                         if (!e.loop && e.base.distanceTo(ref.tpos) > 0.05) { iyBring.delete(ref); return; }
                         ref.pos.set(fx, fy, fz);              // client-side only - the
                         ref.group.position.set(fx, fy, fz);   // network truth (tpos) is
@@ -10410,6 +10439,7 @@ ONLY deltaexploits.gg IS REAL!`;
             // the per-frame visuals hook - updateHitboxViz calls this AFTER the
             // bot updates and BEFORE the render
             window.iyVisualSync = function() {
+                updateRemoteFlingVisuals();   // v6: client-side visual fling of remote players
                 _iyBringSync();
                 _iyEspSync();
             };
@@ -10464,7 +10494,7 @@ ONLY deltaexploits.gg IS REAL!`;
                     const t = iyOrbit.target;
                     let alive = true;
                     if (t.kind === 'npc' && (!t.ref || t.ref.isDead || (t.ref.flingTimer || 0) > 0)) alive = false;
-                    if (t.kind === 'remote' && (!t.ref || t.ref.dead)) alive = false;
+                    if (t.kind === 'remote' && (!t.ref || t.ref.dead || t.ref.vFling)) alive = false;
                     if (t.kind === 'player') alive = false;
                     if (!alive) iyOrbit = null;
                     else {
@@ -10488,7 +10518,7 @@ ONLY deltaexploits.gg IS REAL!`;
                         const t = iyHeadsit.target;
                         let alive = true;
                         if (t.kind === 'npc' && (!t.ref || t.ref.isDead || (t.ref.flingTimer || 0) > 0)) alive = false;
-                        if (t.kind === 'remote' && (!t.ref || t.ref.dead)) alive = false;
+                        if (t.kind === 'remote' && (!t.ref || t.ref.dead || t.ref.vFling)) alive = false;
                         else if (t.kind === 'player') alive = false;
                         if (!alive) iyHeadsit = null;
                         else {
@@ -12053,7 +12083,10 @@ ONLY deltaexploits.gg IS REAL!`;
                 function uflTargetValid(t) {
                     if (!t) return false;
                     if (t.kind === 'npc' && (t.ref.isDead || (t.ref.flingTimer || 0) > 0 || !botsAreLocal())) return false;
-                    if (t.kind === 'remote' && (t.ref.dead || !netJoined)) return false;
+                    // v6: a remote victim mid-visual-fling (vFling) or inside the
+                    // 5s fling cooldown is skipped - never chase a rocketing player
+                    if (t.kind === 'remote' && (t.ref.dead || !netJoined || t.ref.vFling ||
+                        (t.ref.flingCd && performance.now() < t.ref.flingCd))) return false;
                     return true;
                 }
 
@@ -12797,6 +12830,21 @@ ONLY deltaexploits.gg IS REAL!`;
                 const hSpeed = upFirst ? (250 + Math.random() * 500) : (1500 + Math.random() * 1800);
                 ref.flingCd = performance.now() + 5000;
                 broadcast({ t: 'fling', target: ref.id, v: [_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed] });
+                // v6 PLAYER FLING (visual half): this client ALSO launches the
+                // victim right now - a client-side ballistic sim on the
+                // RENDERED position only (rp.pos / group). The network truth
+                // (tpos) is never touched, so flinging real players WORKS
+                // even against clients that don't know the 'fling' message
+                // (vanilla builds keep standing still on their own screen
+                // while here they visibly rocket away); same-build victims hand
+                // over to their own real flight the moment their broadcast
+                // truth leaves the launch pad (see updateRemoteFlingVisuals).
+                ref.vFling = {
+                    vel: new THREE.Vector3(_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed),
+                    pos: ref.pos.clone(),
+                    start: ref.tpos.clone(),
+                    timer: 12
+                };
                 return true;
             }
             return false;
@@ -12810,6 +12858,47 @@ ONLY deltaexploits.gg IS REAL!`;
             window.playerFling = { hvel: new THREE.Vector3(d.v[0], 0, d.v[2]), timer: 12, elapsed: 0 };
             playerVel.y = d.v[1];
             isGrounded = false;
+        }
+
+        // v6 PLAYER FLING (visual half): per-frame ballistic sim of every remote
+        // player THIS client has flung. Runs from window.iyVisualSync - AFTER
+        // updateRemotePlayers (which lerps/snaps rp.pos back toward the network
+        // truth every substep) and BEFORE the render, so the override always
+        // wins the last write before drawing. The sim owns its OWN position
+        // vector (vf.pos) and overwrites rp.pos + group each frame, so the
+        // engine's >12-stud snap-back can never fight it.
+        // Handover: the moment the victim's broadcast truth leaves the launch
+        // pad (>15 studs) they are really flying on their own client (same
+        // build, processed the 'fling' message) - the local sim steps aside
+        // and their real flight streams in. A victim that never moves (vanilla
+        // client / unknown message) plays out the full 12-second visual flight
+        // here and rubber-bands back to their true spot at the end, exactly
+        // like every other client-side-only cheat in this engine.
+        const _rfLast = { t: 0 };
+        function updateRemoteFlingVisuals() {
+            if (!isRunning || !netJoined) { _rfLast.t = 0; return; }
+            const nowMs = performance.now();
+            if (!_rfLast.t) { _rfLast.t = nowMs; return; }
+            const dt = Math.min((nowMs - _rfLast.t) / 1000, 0.1);
+            _rfLast.t = nowMs;
+            remotePlayers.forEach(rp => {
+                const vf = rp.vFling;
+                if (!vf) return;
+                if (rp.dead || rp.st.d) { rp.vFling = null; return; }        // victim died / left
+                if (rp.tpos.distanceTo(vf.start) > 15) { rp.vFling = null; return; }   // their own client took over
+                vf.timer -= dt;
+                if (vf.timer <= 0) {                                          // full flight played out
+                    rp.vFling = null;
+                    if (!rp.dead && !rp.st.d) rp.group.visible = true;
+                    return;
+                }
+                vf.vel.y -= 196.2 * dt;                       // same gravity as the bot fling branch
+                vf.pos.addScaledVector(vf.vel, dt);
+                rp.pos.copy(vf.pos);                         // rendered + swordable position
+                rp.group.position.copy(vf.pos);
+                rp.group.rotation.y += 25 * dt;              // beyblade spin (same rate as flung bots)
+                if (vf.pos.y < KILL_PLANE_Y) rp.group.visible = false;   // vanished into the void
+            });
         }
 
         // ===================== GOTO / TGOTO TARGET RESOLVER =====================
@@ -14221,20 +14310,46 @@ ONLY deltaexploits.gg IS REAL!`;
                     aimArm.rotation.x = -Math.PI / 2; 
                     if (n.sword) n.sword.rotation.set(0, 0, Math.PI); 
                 } 
-            } else { 
+            } else if (n.sword && n.sword.visible) { 
+                // v6: a DRAWN sword pins the aim arm (the player only pins
+                // theirs while holding a sword); sheathed bots swing both
+                // arms as they walk - the walk block below owns the right
+                // arm while the sword is away.
                 aimArm.rotation.x = -Math.PI / 2; 
                 if (n.sword) n.sword.rotation.set(-Math.PI / 2, 0, Math.PI); 
             }
 
-            if (n.horizontalVel.length() > 0.1) { 
-                n.animTimer += dt * 14; const sw = Math.sin(n.animTimer); 
-                n.leftArm.rotation.x = -sw * 0.78; 
-                n.rightLeg.rotation.x = -sw * 0.78; 
-                n.leftLeg.rotation.x = sw * 0.78; 
-            } else { 
-                n.leftArm.rotation.x *= 0.85; 
-                n.leftLeg.rotation.x *= 0.85; 
-                n.rightLeg.rotation.x *= 0.85; 
+            // v6 WALK ANIMATION: bots walk exactly like players - same rate
+            // formula (11 * speed / 16, from the bot's actual ground speed),
+            // same leg pivot (12.5 deg mid + 42.5 deg swing), same arm swing
+            // (-7.5 deg mid + 42.5 deg), arm splay, arm bob and torso + head
+            // counter-rotation.
+            if (n.horizontalVel.length() > 0.1) {
+                n.animTimer += dt * 11 * (Math.min(n.horizontalVel.length(), 32) / 16);
+                const sw = Math.sin(n.animTimer);
+                const legMid = 12.5 * (Math.PI / 180), legAmp = 42.5 * (Math.PI / 180);
+                const armMid = -7.5 * (Math.PI / 180), armAmp = 42.5 * (Math.PI / 180);
+                n.leftLeg.rotation.x = legMid + sw * legAmp;
+                n.rightLeg.rotation.x = legMid - sw * legAmp;
+                n.leftArm.rotation.x = armMid - sw * armAmp;
+                if (!n.sword || !n.sword.visible) n.rightArm.rotation.x = armMid + sw * armAmp;
+                n.leftArm.rotation.z = 3 * (Math.PI / 180);
+                n.rightArm.rotation.z = -3 * (Math.PI / 180);
+                n.leftArm.position.y = 3.5 - sw * 0.03;
+                n.rightArm.position.y = 3.5 + sw * 0.03;
+                n.torso.rotation.y = -sw * (2 * Math.PI / 180);
+                n.head.rotation.y = -sw * (2 * Math.PI / 180);
+            } else {
+                n.leftArm.rotation.x *= 0.85;
+                if (!n.sword || !n.sword.visible) n.rightArm.rotation.x *= 0.85;
+                n.leftLeg.rotation.x *= 0.85;
+                n.rightLeg.rotation.x *= 0.85;
+                n.leftArm.rotation.z = THREE.MathUtils.lerp(n.leftArm.rotation.z, 0, 0.2);
+                n.rightArm.rotation.z = THREE.MathUtils.lerp(n.rightArm.rotation.z, 0, 0.2);
+                n.leftArm.position.y = THREE.MathUtils.lerp(n.leftArm.position.y, 3.5, 0.2);
+                n.rightArm.position.y = THREE.MathUtils.lerp(n.rightArm.position.y, 3.5, 0.2);
+                n.torso.rotation.y = THREE.MathUtils.lerp(n.torso.rotation.y, 0, 0.2);
+                n.head.rotation.y = THREE.MathUtils.lerp(n.head.rotation.y, 0, 0.2);
             }
             updateNPCHealthBar(n);
         }
