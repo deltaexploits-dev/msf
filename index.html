@@ -582,6 +582,12 @@
         body.phone-ui #pause-menu .menu-btn-container { order: 2; margin-top: 0; margin-bottom: 10px; gap: 8px; }
         body.phone-ui #pause-menu .menu-row-btn { height: 42px; font-size: 14px; }
         body.phone-ui #pause-menu .menu-scroll-area { order: 3; }
+        /* v9 PHONE LANDSCAPE: the pause menu gets WIDER (the 0.8x render scale
+           keeps it inside the screen) so the People tab's row of 4 player
+           cards fits with room to spare - no more sideways scrolling. */
+        @media (orientation: landscape) {
+            body.phone-ui #pause-menu { width: min(88vw, 660px); max-width: 660px; }
+        }
         @media (max-width: 600px) {
             #pause-menu .menu-tab-strip { order: 1; gap: 18px; margin-bottom: 10px; }
             #pause-menu .menu-tab-btn { font-size: 14px; padding: 9px 2px; gap: 6px; }
@@ -667,11 +673,16 @@
 
         /* People tab: rows of 4 rounded gray cards, taller than wide */
         .people-header { font-size: 18px; font-weight: 700; color: #ffffff; margin-bottom: 16px; }
-        .people-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+        /* v9: minmax(0, 1fr) - the 4 card tracks now ALWAYS split the container
+           exactly. Plain 1fr refused to shrink below the avatar snapshot's
+           min-content width, pushing the row ~190px past the phone menu's
+           edge and forcing the People tab to scroll sideways. */
+        .people-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
         .person-card {
             background: rgba(128,128,128,0.22); border-radius: 12px; padding: 8px;
             cursor: pointer; transition: background 0.15s;
             display: flex; flex-direction: column; aspect-ratio: 3 / 4; box-sizing: border-box;
+            min-width: 0;   /* v9: a card never forces its grid track wider */
         }
         .person-card:hover { background: rgba(128,128,128,0.38); }
         .person-snapshot { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
@@ -6526,16 +6537,16 @@
             rGravCoil.position.y = 0.35;
             rGravCoil.visible = false;
             rArm.add(rGravCoil);
-            const tag = document.createElement('div');
-            tag.className = 'player-nametag';
-            tag.textContent = info.name;
-            document.body.appendChild(tag);
-            const hpBar = document.createElement('div');
-            hpBar.className = 'player-healthbar';
-            const hpFill = document.createElement('div');
-            hpFill.className = 'player-healthbar-fill';
-            hpBar.appendChild(hpFill);
-            document.body.appendChild(hpBar);
+            // v10: the overhead name + health bar are the SAME canvas sprites
+            // the bots use (same '300 32px Arial' font, same white text, same
+            // 12x1.5 scale at 6 studs up, same health bar at 5.2) - player
+            // nametags are pixel-identical to bot nametags.
+            const tag = createNPCTextSprite(info.name || 'Player');
+            tag.position.y = 6;
+            g.add(tag);
+            const hpSprite = createNPCHealthSprite();
+            hpSprite.position.y = 5.2;
+            g.add(hpSprite);
             const rp = {
                 id: id, name: info.name || 'Player', username: info.username || '',
                 chatColor: info.color || '#FD2943', skinMap: info.skinMap,
@@ -6548,7 +6559,7 @@
                     leftArm: lArm.children[0].material, rightArm: rArm.children[0].material,
                     leftLeg: lLeg.children[0].material, rightLeg: rLeg.children[0].material
                 },
-                tag: tag, bubbles: [], hpBar: hpBar, hpFill: hpFill,
+                tag: tag, bubbles: [], healthSprite: hpSprite,
                 pos: new THREE.Vector3(0, 2, 10), tpos: new THREE.Vector3(0, 2, 10),
                 ry: 0, try_: 0,
                 dead: false, debris: [],
@@ -6583,8 +6594,13 @@
             const rp = remotePlayers.get(id);
             if (!rp) return;
             scene.remove(rp.group);
-            rp.tag.remove();
-            rp.hpBar.remove();
+            // v10: name + health are 3D sprites now - dispose them with the body
+            rp.group.remove(rp.tag);
+            rp.tag.material.map.dispose();
+            rp.tag.material.dispose();
+            rp.group.remove(rp.healthSprite);
+            rp.healthSprite.material.map.dispose();
+            rp.healthSprite.material.dispose();
             rp.bubbles.forEach(b => b.el.remove());
             remotePlayers.delete(id);
             rebuildLeaderboard();
@@ -6656,9 +6672,14 @@
             } else if (d.t === 'fling') {
                 // v4 FLING (cheat system): the named target's own client launches
                 // them - same symmetric protocol as 'dmg'.
+                // v9 BOTH ENDS: with the vis flag every OTHER same-build client
+                // (this host included, when one client flings another) also runs
+                // the visual flight, so the fling shows on every screen running
+                // this build instead of only the attacker's.
                 if (d.target === myNetId()) {
                     receiveRemoteFling(d);
                 } else {
+                    if (d.vis) { const rp = remotePlayers.get(d.target); if (rp) startRemoteVFling(rp, d.v); }
                     broadcast(d, conn);
                 }
             } else if (d.t === 'kill') {
@@ -6690,7 +6711,14 @@
             } else if (d.t === 'dmg') {
                 if (d.target === myNetId()) applyLocalDamage(d.dmg, 'remote', d.by);
             } else if (d.t === 'fling') {
-                if (d.target === myNetId()) receiveRemoteFling(d);   // v4 FLING
+                // v4 FLING: the victim launches for real on their own client.
+                // v9 BOTH ENDS: with the vis flag every other same-build client
+                // ALSO runs the visual flight for the victim.
+                if (d.target === myNetId()) receiveRemoteFling(d);
+                else if (d.vis) {
+                    const rp = remotePlayers.get(d.target);
+                    if (rp) startRemoteVFling(rp, d.v);
+                }
             } else if (d.t === 'kill') {
                 if (d.by === myNetId()) { playerKills += 1; playerKillstreak += 1; rebuildLeaderboard(); }
             } else if (d.t === 'leave') {
@@ -7251,11 +7279,26 @@
         function updateOverheadUI() {
             remotePlayers.forEach(rp => {
                 if (rp.dead) {
-                    rp.tag.style.display = 'none';
-                    rp.hpBar.style.display = 'none';
+                    // v10: the name + health sprites are children of the hidden
+                    // group - they vanish with the body. Only the HTML chat
+                    // bubbles need explicit hiding.
                     rp.bubbles.forEach(b => b.el.style.display = 'none');
                     return;
                 }
+                // v10: the name + health bar are the SAME canvas sprites the
+                // bots use - same camera-distance fade (fully gone by 100
+                // studs), same showPlayerNames gate, and the bots' own health
+                // bar painter. Player overheads are pixel-identical to bot
+                // overheads (same font, same text, same bar).
+                const dc = rp.group.position.distanceTo(camera.position);
+                rp.tag.material.opacity = THREE.MathUtils.clamp(1 - (dc / 100), 0, 1);
+                rp.health = (rp.st.hp !== undefined) ? rp.st.hp : 100;
+                rp.isDead = rp.dead;
+                updateNPCHealthBar(rp);
+                if (rp.healthSprite.visible) rp.healthSprite.material.opacity = rp.tag.material.opacity;
+                if (!showPlayerNames) rp.tag.material.opacity = 0;
+                // chat bubbles keep the engine's HTML projection (the bots'
+                // bubbles are placed the exact same way)
                 rp.head.getWorldPosition(_overheadV);
                 _overheadV.y += 1.0;
                 const pdist = playerPos.distanceTo(rp.pos); // your player -> their player
@@ -7264,20 +7307,6 @@
                 const sx = (_overheadV.x * 0.5 + 0.5) * window.innerWidth;
                 const sy = (-_overheadV.y * 0.5 + 0.5) * window.innerHeight;
                 const fade = THREE.MathUtils.clamp(1 - (pdist - NAMETAG_FADE_START) / (NAMETAG_FADE_END - NAMETAG_FADE_START), 0, 1);
-                const show = visible && showPlayerNames && fade > 0.02;
-                rp.tag.style.display = show ? 'block' : 'none';
-                rp.tag.style.opacity = fade;
-                rp.tag.style.left = sx + 'px';
-                rp.tag.style.top = (sy - 12) + 'px';
-                const hp = (rp.st.hp !== undefined) ? rp.st.hp : 100;
-                if (hp < 100 && show) {
-                    rp.hpBar.style.display = 'block';
-                    rp.hpBar.style.opacity = fade;
-                    rp.hpBar.style.left = sx + 'px';
-                    rp.hpBar.style.top = (sy + 6) + 'px';
-                    rp.hpFill.style.width = Math.max(0, hp) + '%';
-                    rp.hpFill.style.background = hpBarColor(hp);
-                } else rp.hpBar.style.display = 'none';
                 let by = sy - 38;
                 for (let i = rp.bubbles.length - 1; i >= 0; i--) {
                     const b = rp.bubbles[i];
@@ -9765,6 +9794,9 @@ ONLY deltaexploits.gg IS REAL!`;
                         <div>orbit [player] [studs] [speed]</div>
                         <div>unorbit</div>
                         <div>headsit [player]</div>
+                        <div>bang [player] [speed]</div>
+                        <div>unbang</div>
+                        <div>jerk</div>
                         <div>esp</div>
                         <div>noesp / unesp</div>
                         <div>cbring [player|all|others] [studs]</div>
@@ -9797,6 +9829,10 @@ ONLY deltaexploits.gg IS REAL!`;
             let iyFlingOn = false, iyFlingAngle = 0, iyFlingSaveYaw = 0;
             let iyOrbit = null;
             let iyHeadsit = null;
+            // v9: 'bang' (glued behind a target, pumping 1 stud back and forth)
+            // and 'jerk' (the Jerk tool's right-arm pose oscillator)
+            let iyBang = null;
+            let iyJerkPhase = 0;
             const _otmp = new THREE.Vector3();
             const _uflTmp = new THREE.Vector3();
             // v5: ESP hitbox boxes + client-side bring state + scratch objects
@@ -9890,6 +9926,8 @@ ONLY deltaexploits.gg IS REAL!`;
                     }
                     if (base === 'orbit') { iyOrbit = null; }
                     if (base === 'headsit') { iyHeadsit = null; }
+                    // v9: unbang - stop pumping behind the target
+                    if (base === 'bang') { iyBang = null; }
                     // v5: noesp/unesp removes the hitbox boxes; uncbring /
                     // unloopbring drop the client-side brings again (no arg = all).
                     if (base === 'esp') { _iyEspClear(); }
@@ -10164,6 +10202,57 @@ ONLY deltaexploits.gg IS REAL!`;
                 if (cmd === 'headsit') {
                     const target = resolveGotoTarget(parts.slice(1).join(' '));
                     if (target) iyHeadsit = { target: target };
+                }
+                // bang [player] [speed]: stick the player BEHIND the requested
+                // player/bot and move them back and forth 1 stud ("bang astralium").
+                // A trailing value multiplies the speed of the back-and-forth
+                // movement ("bang astralium 4" = 4x faster; default 1). unbang
+                // stops it; jumping gets you off; a dying/flung target cancels it.
+                // v10: the target is NEVER pushed - the engine's depenetration
+                // skips the bang target (window.iyBangTarget), so the pump ghosts
+                // through the bot instead of shoving it across the map.
+                if (cmd === 'bang') {
+                    const nums = [];
+                    const nameParts = [];
+                    for (let i = 1; i < parts.length; i++) {
+                        if (parts[i] !== '' && !isNaN(parseFloat(parts[i]))) nums.push(parseFloat(parts[i]));
+                        else if (nums.length === 0) nameParts.push(parts[i]);
+                    }
+                    const target = resolveGotoTarget(nameParts.join(' '));
+                    if (target) {
+                        iyBang = {
+                            target: target,
+                            speed: nums.length > 0 ? Math.max(0.1, nums[0]) : 1,
+                            phase: 0,
+                            behind: 1.8      // rest distance behind the target (studs)
+                        };
+                    }
+                }
+                // jerk: adds the "Jerk" TOOL to the inventory. Equip it (tap its
+                // slot) and the right arm rotates inwards 15 degrees, shifts 1
+                // stud forward and pumps forward and back 1 stud - unequip and
+                // the normal walk/idle animation takes the arm right back.
+                if (cmd === 'jerk') {
+                    let have = false;
+                    for (let i = 0; i < playerInventory.length; i++) {
+                        if (playerInventory[i] && playerInventory[i].id === 'jerk') { have = true; break; }
+                    }
+                    if (have) iyPrint('Jerk tool is already in your inventory.');
+                    else {
+                        let slot = -1;
+                        for (let i = 0; i < playerInventory.length; i++) {
+                            if (playerInventory[i] === null) { slot = i; break; }
+                        }
+                        if (slot === -1) { iyPrint('Inventory full!'); }
+                        else {
+                            playerInventory[slot] = { id: 'jerk', name: 'Jerk', type: 'jerk', icon: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64'><text x='32' y='40' font-family='Arial' font-weight='bold' font-size='15' fill='%23333' text-anchor='middle'>JK</text></svg>" };
+                            iyPrint('Jerk added to inventory.');
+                        }
+                    }
+                    if (!document.getElementById('inventory').classList.contains('active')) {
+                        toggleInventory();
+                    }
+                    buildInventoryUI();
                 }
 
                 // ===================== v5 COMMANDS =====================
@@ -10446,6 +10535,18 @@ ONLY deltaexploits.gg IS REAL!`;
             // debug/inspection handles (same convention as window.ufling)
             window.iyEspState = iyEsp;
             window.iyBringState = iyBring;
+            // v10 NO-PUSH: live getter for the engine - the bot the player is
+            // currently 'bang'ing (null when idle / a remote target). updateNPC's
+            // player-vs-bot depenetration uses it: the bang pump dives to 0.8
+            // studs, deep inside the 2.0-stud body radius, and every "toward"
+            // stroke used to shove the bot out by (2.0 - dist) - the next stroke
+            // shoved it again, ratcheting the bot across the map and off the
+            // edge. The bang target is exempt from that shove now (the player
+            // ghosts through it, like every real bang script); every other bot
+            // still depenetrates normally.
+            window.iyBangTarget = function() {
+                return (iyBang && iyBang.target && iyBang.target.kind === 'npc') ? iyBang.target.ref : null;
+            };
 
             window.iyPreUpdate = function(dt, now) {
                 if (document.activeElement && (
@@ -10472,16 +10573,22 @@ ONLY deltaexploits.gg IS REAL!`;
                 // playerFling: THIS client's player was flung by someone else -
                 // keep the horizontal momentum alive (the airHorizontalVel game
                 // patch re-applies it every substep) until they land or the void
-                // takes over.
+                // takes over. v9 BOTH ENDS: the victim beyblades on their OWN
+                // screen too (25 rad/s, see iyPostUpdate) and the fling ending
+                // restores the exact facing they had before it started.
                 if (window.playerFling) {
-                    if (isRagdoll || !isRunning) window.playerFling = null;
+                    const _pfDone = () => {
+                        if (window.playerFling && charGroup) charGroup.rotation.y = window.playerFling.saveYaw;
+                        window.playerFling = null;
+                    };
+                    if (isRagdoll || !isRunning) _pfDone();
                     else {
                         window.playerFling.elapsed += dt;
                         window.playerFling.timer -= dt;
                         moveKeys = { w: false, a: false, s: false, d: false, space: false };
                         flyDown = false;
                         iyWalkTarget = null;
-                        if (window.playerFling.timer <= 0 || (isGrounded && window.playerFling.elapsed > 0.6)) window.playerFling = null;
+                        if (window.playerFling.timer <= 0 || (isGrounded && window.playerFling.elapsed > 0.6)) _pfDone();
                     }
                 }
 
@@ -10525,6 +10632,27 @@ ONLY deltaexploits.gg IS REAL!`;
                             moveKeys = { w: false, a: false, s: false, d: false, space: false };
                             flyDown = false;
                             iyWalkTarget = null;
+                        }
+                    }
+                }
+
+                // IY 'bang': glued behind the target, pumping 1 stud back and
+                // forth. Jump = get off; a dying or flung target cancels it.
+                if (iyBang) {
+                    if (moveKeys.space) {
+                        iyBang = null;                           // jumping gets you off
+                    } else {
+                        const t = iyBang.target;
+                        let alive = true;
+                        if (t.kind === 'npc' && (!t.ref || t.ref.isDead || (t.ref.flingTimer || 0) > 0)) alive = false;
+                        if (t.kind === 'remote' && (!t.ref || t.ref.dead || t.ref.vFling)) alive = false;
+                        else if (t.kind === 'player') alive = false;
+                        if (!alive) iyBang = null;
+                        else {
+                            moveKeys = { w: false, a: false, s: false, d: false, space: false };
+                            flyDown = false;
+                            iyWalkTarget = null;
+                            iyBang.phase += 8 * iyBang.speed * dt;   // the pump rate (speed = multiplier)
                         }
                     }
                 }
@@ -10610,6 +10738,44 @@ ONLY deltaexploits.gg IS REAL!`;
                     charGroup.rotation.y = yaw;
                     pL_Arm.rotation.x = -Math.PI / 2; pR_Arm.rotation.x = -Math.PI / 2;
                     pL_Leg.rotation.x = -Math.PI / 2; pR_Leg.rotation.x = -Math.PI / 2;
+                }
+
+                // IY 'bang': glue to the target's BACK - 1.8 studs behind them,
+                // facing them, pumping 1 stud toward and away along their facing
+                // axis (sin phase; "bang astralium 4" pumps 4x as fast).
+                if (iyBang) {
+                    const t = iyBang.target;
+                    const feet = npcTargetPosition(t, _otmp);
+                    let yaw = 0;
+                    if (t.kind === 'npc') yaw = t.ref.yaw || 0;
+                    else if (t.kind === 'remote') yaw = t.ref.ry || 0;
+                    const fx = Math.sin(yaw), fz = Math.cos(yaw);          // the target's facing
+                    const dist = iyBang.behind - Math.sin(iyBang.phase) * 1;   // 0.8 .. 2.8 studs
+                    playerPos.set(feet.x - fx * dist, feet.y + 5.5, feet.z - fz * dist);
+                    playerVel.set(0, 0, 0); playerHorizontalVel.set(0, 0, 0);
+                    charGroup.position.set(playerPos.x, playerPos.y - 5.5, playerPos.z);
+                    charGroup.rotation.y = Math.atan2(feet.x - playerPos.x, feet.z - playerPos.z);   // face the target
+                }
+
+                // IY 'jerk' TOOL: while it is equipped the right arm rotates
+                // inwards 15 degrees, sits 1 stud forward and pumps 1 stud
+                // forward and back (12 rad/s). Runs AFTER the walk animation,
+                // exactly like the sword's own arm pin - unequip and the normal
+                // animation takes the arm right back.
+                if (equippedSlot !== -1 && playerInventory[equippedSlot] && playerInventory[equippedSlot].id === 'jerk') {
+                    iyJerkPhase += 12 * dt;
+                    pR_Arm.rotation.z = 15 * (Math.PI / 180);            // inwards 15 deg
+                    pR_Arm.position.z = 1 + Math.sin(iyJerkPhase) * 1;   // +1 stud forward, +/- 1 stud pump
+                }
+
+                // v9 BOTH ENDS: while THIS player is being flung they beyblade
+                // on their own screen at the same 25 rad/s every other client
+                // sees - being flung now looks like being flung on the victim's
+                // end too (the facing is restored when the fling ends). Runs
+                // after the fling/spin overrides so a flung victim always spins.
+                if (window.playerFling && !isRagdoll) {
+                    window.playerFling.spinAngle += window.playerFling.spin * dt;
+                    charGroup.rotation.y = window.playerFling.spinAngle;
                 }
 
                 // IY 'fling': the insanely fast beyblade spin
@@ -12802,6 +12968,20 @@ ONLY deltaexploits.gg IS REAL!`;
         // momentum, then falls all the way down to the kill plane (the void).
         // The rest blast away horizontally and leave the map almost instantly.
         const _flingDirV = new THREE.Vector3();
+        // v9 BOTH ENDS: starts (or restarts) the client-side visual fling sim
+        // for a remote player. Used by the ATTACKER's own client and - through
+        // the 'fling' message's vis flag - by every OTHER same-build client in
+        // the server, so a victim flung by anyone visibly rockets away on every
+        // screen running this build, not just the attacker's.
+        function startRemoteVFling(rp, v) {
+            if (!rp || !v) return;
+            rp.vFling = {
+                vel: new THREE.Vector3(v[0], v[1], v[2]),
+                pos: rp.pos.clone(),
+                start: rp.tpos.clone(),
+                timer: 12
+            };
+        }
         function flingEntityRandom(kind, ref) {
             if (kind === 'npc') {
                 if (!ref || ref.isDead || !botsAreLocal()) return false;
@@ -12829,7 +13009,14 @@ ONLY deltaexploits.gg IS REAL!`;
                 const vy = upFirst ? (450 + Math.random() * 250) : (120 + Math.random() * 380);
                 const hSpeed = upFirst ? (250 + Math.random() * 500) : (1500 + Math.random() * 1800);
                 ref.flingCd = performance.now() + 5000;
-                broadcast({ t: 'fling', target: ref.id, v: [_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed] });
+                // v9 BOTH ENDS: the 'fling' message now carries the vis flag -
+                // the victim's own client launches them for real (symmetric
+                // 'dmg'-style protocol), AND every other same-build client in
+                // the server starts the visual flight below so the fling shows
+                // on ALL screens running this build (vanilla clients ignore the
+                // whole message, exactly as before).
+                const v = [_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed];
+                broadcast({ t: 'fling', target: ref.id, v: v, vis: true });
                 // v6 PLAYER FLING (visual half): this client ALSO launches the
                 // victim right now - a client-side ballistic sim on the
                 // RENDERED position only (rp.pos / group). The network truth
@@ -12839,12 +13026,7 @@ ONLY deltaexploits.gg IS REAL!`;
                 // while here they visibly rocket away); same-build victims hand
                 // over to their own real flight the moment their broadcast
                 // truth leaves the launch pad (see updateRemoteFlingVisuals).
-                ref.vFling = {
-                    vel: new THREE.Vector3(_flingDirV.x * hSpeed, vy, _flingDirV.z * hSpeed),
-                    pos: ref.pos.clone(),
-                    start: ref.tpos.clone(),
-                    timer: 12
-                };
+                startRemoteVFling(ref, v);
                 return true;
             }
             return false;
@@ -12853,9 +13035,20 @@ ONLY deltaexploits.gg IS REAL!`;
         // Receiving end of the 'fling' network message: THIS client's own player
         // is the victim. Launch them; iyPreUpdate keeps the horizontal momentum
         // alive until they land, and the normal kill-plane void death does the rest.
+        // v9 BOTH ENDS: the victim's own client now experiences the SAME fling
+        // the exploiter's screen shows - the real ballistic launch PLUS the
+        // beyblade spin (rotation.y at 25 rad/s, the same rate flung bots and
+        // the attacker's remote-visual sim spin at). The pre-fling facing is
+        // saved and restored the moment the fling ends, so the victim is never
+        // stranded at a random spin angle (same principle as the unfling fix).
         function receiveRemoteFling(d) {
             if (isRagdoll || !isRunning || !d || !d.v) return;
-            window.playerFling = { hvel: new THREE.Vector3(d.v[0], 0, d.v[2]), timer: 12, elapsed: 0 };
+            const y0 = charGroup ? charGroup.rotation.y : 0;
+            window.playerFling = {
+                hvel: new THREE.Vector3(d.v[0], 0, d.v[2]),
+                timer: 12, elapsed: 0,
+                spin: 25, spinAngle: y0, saveYaw: y0
+            };
             playerVel.y = d.v[1];
             isGrounded = false;
         }
@@ -14243,7 +14436,11 @@ ONLY deltaexploits.gg IS REAL!`;
             const fH = floorRay.intersectObjects(npcFloorObjs);
             if (fH.length > 0 && fH[0].distance < 4.0) { n.pos.y = fH[0].point.y + 5.5; n.vel.y = 0; n.isGrounded = true; } else n.isGrounded = false;
             
-            if (!isRagdoll && !n.isDead) {
+            // v10 BANG NO-PUSH: the bot currently being 'bang'ed is exempt
+            // from the shove below - the pump dives inside the 2.0-stud body
+            // radius and each "toward" stroke used to ratchet the bot across
+            // the map (and off the edge). Other bots depenetrate as before.
+            if (!isRagdoll && !n.isDead && !(window.iyBangTarget && window.iyBangTarget() === n)) {
                 let dx = n.pos.x - playerPos.x;
                 let dz = n.pos.z - playerPos.z;
                 let distSq = dx*dx + dz*dz;
